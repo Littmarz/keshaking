@@ -1,0 +1,39 @@
+# secrets
+.env
+*.env.local
+
+# python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# node
+node_modules/
+dist/
+.vite/
+
+# data & models
+data/*
+!data/README.md
+models/*
+!models/README.md
+qdrant_storage/
+*.gguf
+*.safetensors
+*.bin
+*.tar
+*.db
+*.sqlite
+
+# sandbox: тренировочные документы
+sandbox/**/samples/
+sandbox/synthetic/*.pdf
+sandbox/synthetic/*.docx
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
