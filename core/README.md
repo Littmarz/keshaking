@@ -4,8 +4,9 @@
 
 ```
 core/
-└── schemas.py   Document · Chunk · Hit · UserContext · Citation · AgentStep · AgentResult
+└── schemas.py   Document · Chunk · Hit · SearchResult · UserContext · Citation · AgentStep · AgentResult
 ```
 
-⚠️ Меняем только через PR с ревью **всех четверых** — от этих схем зависят все модули.
-Создаём 26.11 после ТЗ, копируя код из `docs/02-contracts.md`.
+⚠️ Меняем только через PR с ревью **двух** человек (автор модуля-потребителя + капитан) — от этих схем зависят все модули, но четыре ревью за 48 часов — слишком медленно.
+
+⛔ Пишем **26.11 после 10:00** по таблицам полей из `docs/02-contracts.md`. До старта кода нет (правило хакатона).

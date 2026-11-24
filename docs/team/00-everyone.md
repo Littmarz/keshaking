@@ -44,9 +44,8 @@ powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | ie
 ## 4. Проверь, что всё работает (10 минут)
 
 ```bash
-# Python + uv
-mkdir -p ~/hack-test && cd ~/hack-test
-uv init && uv add requests && uv run python -c "import requests; print('ok')"
+# Python + uv (без своего кода — только проверка установки)
+uv --version && uv python list
 
 # Docker
 docker run --rm hello-world
@@ -57,6 +56,8 @@ ollama run qwen3:0.6b "Привет! Ответь одним словом."
 ```
 
 ## 5. Прочитать (30 минут)
+
+- [ ] ⛔ **Правило: до 10:00 26.11 код не пишем** — [../00-conditions.md](../00-conditions.md)
 
 - [ ] [../../README.md](../../README.md) — общий обзор
 - [ ] [../00-conditions.md](../00-conditions.md) — условия

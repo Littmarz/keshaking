@@ -3,7 +3,9 @@
 > **Твоя зона:** `backend/` · `frontend/` · `deploy/` + координация команды
 > **Твой главный результат:** работающий стенд — открыл браузер, залогинился, задал вопрос, увидел шаги агента, ответ с цитатами, кликнул в цитату → документ с подсвеченным пунктом, переключил пользователя → другие права, открыл дашборд аналитики. Всё поднимается одной командой без интернета.
 > **Критерии жюри, за которые отвечаешь:** UX и демо, права доступа (бонус), корректность реализации, визуализация агентности и аналитики.
-> **Нагрузка:** ~48 ч разработки (как у остальных, см. [README.md](README.md#распределение-часов)).
+> **Нагрузка:** спринт 48 ч (26.11 10:00 → 28.11 10:00), реально ~30–34 ч кода; P2 не делаем (см. [README.md](README.md#распределение-часов)).
+> ⛔ **До 10:00 26.11 код не пишем** — ни в репо, ни в песочнице. До старта: установка, изучение, макеты, схемы, сценарий видео ([../00-conditions.md](../00-conditions.md)).
+> ❗ **Выбрать задачу в личном кабинете до 10:00 МСК 25.11.**
 
 **Твои парные задачи (👥):**
 - **П3. Аналитика** — с 🔎 разработчиком 3: он считает (неудачные поиски, пробелы, темы, KPI), ты делаешь `/analytics/*` и дашборд.
@@ -43,8 +45,9 @@
 - [ ] Назначить время ежедневного синка (15 минут)
 
 ### Вс 22 – Ср 25
+- [ ] **До 10:00 МСК 25.11 — выбрать задачу «Поиск ответов на вопросы по корп. документам» в личном кабинете**
 - [ ] Каждый вечер — короткая проверка в чате: кто что прошёл по своему чек-листу
-- [ ] Ср 25.11 вечером — **созвон 1 час**: каждый показывает свою песочницу (5 мин), финализируем [../02-contracts.md](../02-contracts.md)
+- [ ] Ср 25.11 вечером — **созвон 1 час**: каждый показывает свой проект — текстом и схемами (5 мин), финализируем [../02-contracts.md](../02-contracts.md)
 - [ ] Отправить вопросы организаторам (текст готовит Claude) ([../05-questions-to-organizers.md](../05-questions-to-organizers.md))
 
 ### 26.11 — день ТЗ
@@ -82,7 +85,7 @@ docker pull ollama/ollama:latest
 
 ## 3. Что изучить
 
-> Время — ориентир. Учи **на практике в песочнице**, а не просто читая.
+> Время — ориентир. Изучаем **по документации и готовым примерам, код не пишем** — по правилам хакатона до 26.11 10:00 писать код нельзя.
 
 ### Backend (~6 ч)
 
@@ -123,34 +126,34 @@ docker pull ollama/ollama:latest
 
 ## 4. План подготовки по дням (21.11 – 25.11)
 
+> ⛔ Без кода: изучение, макеты, схемы, тексты.
+
 ### Сб 21.11 (~3 ч)
 - [ ] Капитанские задачи из раздела 1
 - [ ] Общий чек-лист [00-everyone.md](00-everyone.md)
 - [ ] Установить Node, pnpm, скачать docker-образы
 
-### Вс 22.11 (~4 ч) — Backend
-- [ ] Пройти FastAPI Tutorial (роутеры, Depends, модели)
-- [ ] В `sandbox/captain/api/` сделать игрушку:
-  - `GET /health`
-  - `POST /ask` → возвращает фейковый ответ
-  - `POST /ask/stream` → SSE: 4 события `step` с `asyncio.sleep(0.7)` и одно `result`
-- [ ] Проверить стрим через `curl -N -X POST localhost:8000/ask/stream -H 'Content-Type: application/json' -d '{"question":"тест"}'`
-- [ ] SQLModel: таблица `QueryLog`, записать и прочитать
+### Вс 22.11 (~4 ч) — Backend (изучение)
+- [ ] Прочитать FastAPI Tutorial: роутеры, `Depends`, модели, `lifespan`
+- [ ] Разобраться по докам sse-starlette, как отдавать SSE, и как запускать синхронный агент в threadpool
+- [ ] Прочитать SQLModel Tutorial: таблицы, запись, агрегаты
+- [ ] Записать в `sandbox/captain/NOTES.md`: какие эндпоинты, в каком порядке пишем 26.11
 
-### Пн 23.11 (~4 ч) — Frontend
-- [ ] Пройти React Learn (если нужно), создать Vite-проект в `sandbox/captain/web/`
-- [ ] Подключить Tailwind + shadcn/ui
-- [ ] Нарисовать **макеты 4 экранов** (Figma, бумага или сразу в коде) — см. раздел 6
-- [ ] **Решение: React или Streamlit** → записать в [../decisions.md](../decisions.md)
+### Пн 23.11 (~4 ч) — Frontend (изучение + макеты)
+- [ ] Прочитать React Learn (если нужно), доки Vite, Tailwind, shadcn/ui, TanStack Query
+- [ ] Разобраться, как читать SSE из POST (`@microsoft/fetch-event-source`)
+- [ ] Нарисовать **макеты 4 экранов** (Figma или бумага — не в коде!) — см. раздел 6
+- [ ] **Решение: React или Streamlit** → записать в [../decisions.md](../decisions.md). Учти: спринт всего 48 ч
 
-### Вт 24.11 (~4 ч) — Связка
-- [ ] Фронт-игрушка читает SSE из бэк-игрушки: шаги появляются по одному, потом карточка ответа
-- [ ] Чип цитаты → боковая панель (shadcn `Sheet`) с текстом пункта
-- [ ] Мини-график Recharts на фейковых данных
+### Вт 24.11 (~4 ч) — Сценарий видео и сборка (текстом)
+- [ ] **Сценарий видео на 3 минуты одним дублем** (без монтажа!): какие вопросы, в каком порядке, кого переключаем, что показываем на дашборде. Ускорять можно только ожидание модели
+- [ ] Шаблон описания продукта на 1 страницу: подход, стек и модель, принцип работы, реализовано/нет, **расчёт стоимости эксплуатации**, компоненты третьих лиц
+- [ ] Схема docker-compose **текстом** (раздел 7): сервисы, порты, volumes, известные грабли
 
-### Ср 25.11 (~3 ч) — Сборка и контракты
-- [ ] Черновик `docker-compose.yml` (раздел 7): qdrant + ollama + backend + frontend, проверить, что поднимается
+### Ср 25.11 (~3 ч) — Контракты
+- [ ] **До 10:00 — задача выбрана в личном кабинете**
 - [ ] Перечитать [../02-contracts.md](../02-contracts.md) глазами бэкенда: всё ли нужно фронту есть в `AgentResult`?
+- [ ] Расписать первые 4 часа спринта поминутно: кто что делает после кик-оффа
 - [ ] Вечером — созвон команды
 - [ ] Самопроверка (раздел 10)
 
@@ -426,12 +429,14 @@ frontend/
 
 ## 7. Deploy: docker-compose и офлайн
 
+> ⛔ До 26.11 — только описание. Файлы пишем в спринте.
+> Помни: стенд и URL на сдаче не нужны. Compose нужен, чтобы надёжно поднять всё на демо-машине для записи видео, а не для жюри. Если горит — запускаем сервисы скриптами.
+
 ```
 deploy/
 ├── README.md                 # инструкция: с нуля до работающего демо
 ├── docker-compose.yml        # основной (с GPU)
 ├── docker-compose.cpu.yml    # override без GPU (медленно, но работает)
-├── Makefile → в корне репо
 └── scripts/
     ├── download_models.sh    # ollama pull + hf download в ./models (нужен интернет ОДИН раз)
     ├── save_images.sh        # docker save всех образов в .tar — перенос на машину без интернета
@@ -439,104 +444,47 @@ deploy/
     └── offline_check.sh      # отключить сеть контейнерам и прогнать 3 вопроса
 ```
 
-### Черновик `docker-compose.yml`
+### Сервисы
 
-```yaml
-services:
-  qdrant:                      # 📄 разработчик 2 отвечает за настройки
-    image: qdrant/qdrant:latest
-    ports: ["6333:6333"]
-    volumes: ["./data/qdrant:/qdrant/storage"]
+| Сервис | Образ / сборка | Порт | Volumes | Отвечает |
+|---|---|---|---|---|
+| `qdrant` | `qdrant/qdrant:<зафиксированная версия>` | 6333 | `data/qdrant → /qdrant/storage` | 📄 |
+| `llm` | `ollama/ollama:<версия>` (или vLLM — по D-004), GPU через `deploy.resources.reservations.devices` | 11434 | `models/ollama → /root/.ollama` | 🤖 |
+| `backend` | Dockerfile `backend/Dockerfile`, **контекст — корень репо** (backend импортирует `core/`, `agent/`, `retrieval/`) | 8000 | `models/hf → /models/hf`, `data → /app/data` | 🧭 |
+| `frontend` | multi-stage: node build → nginx | 8080 | — | 🧭 |
+| `ingest` | отдельный сервис/профиль (`profiles: [tools]`), **не** внутри backend — иначе docling и его модели раздуют образ backend | — | те же `models/hf`, `data` | 📄 |
 
-  llm:                         # 🤖 разработчик 4 отвечает за настройки (ollama или vllm)
-    image: ollama/ollama:latest
-    ports: ["11434:11434"]
-    volumes: ["./models/ollama:/root/.ollama"]
-    deploy:
-      resources:
-        reservations:
-          devices: [{ driver: nvidia, count: all, capabilities: [gpu] }]
+Переменные окружения backend в контейнере: `QDRANT_URL=http://qdrant:6333`, `LLM_BASE_URL=http://llm:11434/v1`, `MODELS_DIR=/models/hf`, `HF_HUB_OFFLINE=1`. Для Ollama: `OLLAMA_CONTEXT_LENGTH=16384` (через `/v1` `num_ctx` не передаётся).
 
-  backend:                     # 🧭
-    build: { context: ., dockerfile: backend/Dockerfile }
-    env_file: .env
-    environment:
-      QDRANT_URL: http://qdrant:6333
-      LLM_BASE_URL: http://llm:11434/v1
-      HF_HUB_OFFLINE: "1"      # не лезть в интернет за моделями
-    volumes:
-      - ./models/hf:/models/hf  # bge-m3, реранкер
-      - ./data:/app/data
-    depends_on: [qdrant, llm]
-    ports: ["8000:8000"]
+### ⚠️ Известные грабли (проверено при ревью черновика)
 
-  frontend:                    # 🧭
-    build: { context: frontend }
-    depends_on: [backend]
-    ports: ["8080:80"]
+1. **Относительные пути в compose считаются от папки, где лежит compose-файл.** При `docker compose -f deploy/docker-compose.yml` путь `.` — это `deploy/`, а не корень. Решение: во всех командах `docker compose --project-directory . -f deploy/docker-compose.yml …` (или писать пути через `../`). То же для `env_file: .env`.
+2. **`.dockerignore` в корне обязателен** (`models/`, `data/`, `node_modules/`, `.venv/`, `qdrant_storage/`, `*.gguf`) — иначе в контекст сборки уйдут гигабайты весов.
+3. **Путь к моделям один и тот же через `MODELS_DIR`**: локально `./models/hf`, в контейнере `/models/hf`. Нельзя хардкодить `./models/hf/bge-m3`.
+4. **Версии образов фиксируем** (не `latest`) — офлайн-сборка должна быть воспроизводимой.
+5. На демо можно включить у сети `internal: true` — полная изоляция от интернета, но тогда порты наружу не пробросятся.
 
-networks:
-  default:
-    # на демо можно включить internal: true — полная изоляция от интернета
-    # (тогда порты наружу не пробросятся — открывать UI через отдельную сеть/прокси)
-```
+### Команды Makefile (описание)
 
-> ⚠️ `build.context` для backend — **корень репо**, потому что backend импортирует `core/`, `agent/`, `retrieval/`.
-
-### Makefile (в корне)
-
-```makefile
-up:        ; docker compose -f deploy/docker-compose.yml up -d --build
-down:      ; docker compose -f deploy/docker-compose.yml down
-logs:      ; docker compose -f deploy/docker-compose.yml logs -f backend
-models:    ; bash deploy/scripts/download_models.sh
-ingest:    ; docker compose -f deploy/docker-compose.yml exec backend python -m ingest.run
-eval:      ; uv run python -m eval.run --dataset eval/datasets/test.jsonl
-dev-back:  ; cd backend && uv run uvicorn app.main:app --reload --port 8000
-dev-front: ; cd frontend && pnpm dev
-```
+| Цель | Что делает |
+|---|---|
+| `up` / `down` / `logs` | compose up -d --build / down / logs backend — **все с `--project-directory .`** |
+| `models` | `deploy/scripts/download_models.sh` |
+| `ingest` | запуск сервиса `ingest` из профиля `tools` |
+| `eval` | `uv run python -m eval.run --dataset eval/datasets/test.jsonl` |
+| `dev-back` / `dev-front` | uvicorn с `--reload` на 8000 / `pnpm dev` |
 
 ---
 
 ## 8. Монорепо: как собрать
 
-### Python: uv workspace
+### Python: один `pyproject.toml` в корне (решение)
 
-Один `uv.lock` на весь репо, каждый модуль — свой пакет.
+uv workspace с отдельным `pyproject.toml` в каждой папке **в описанном ранее виде не работает**: если `core/pyproject.toml` лежит рядом с `core/schemas.py`, импортируется модуль `schemas`, а не `core.schemas` — нужна раскладка `core/src/core/schemas.py`. За 48 часов это лишняя возня.
 
-```toml
-# pyproject.toml (корень)
-[project]
-name = "keshaking"
-version = "0.1.0"
-requires-python = ">=3.12"
+Поэтому: **один `pyproject.toml` в корне** со всеми зависимостями, папки `core/`, `ingest/`, `retrieval/`, `agent/`, `eval/`, `analytics/`, `backend/` — обычные Python-пакеты (с `__init__.py`), запуск из корня (`python -m agent.cli`, `uvicorn backend.app.main:app`). Python 3.12, менеджер uv, ruff с `line-length = 100`.
 
-[tool.uv.workspace]
-members = ["core", "ingest", "retrieval", "agent", "eval", "analytics", "backend"]
-
-[tool.ruff]
-line-length = 100
-```
-
-Каждый модуль: `core/pyproject.toml`, `retrieval/pyproject.toml` и т.д. Зависимости между ними:
-
-```toml
-# backend/pyproject.toml
-[project]
-name = "backend"
-dependencies = ["fastapi", "uvicorn[standard]", "sqlmodel", "pydantic-settings",
-                "sse-starlette", "core", "agent", "retrieval", "analytics"]
-
-[tool.uv.sources]
-core = { workspace = true }
-agent = { workspace = true }
-retrieval = { workspace = true }
-analytics = { workspace = true }
-```
-
-> Если workspace покажется сложным — запасной вариант: один `pyproject.toml` в корне со всеми зависимостями, папки как обычные пакеты. Для хакатона это нормально.
-
-### Frontend — отдельно, свой `package.json` (pnpm), в Python-workspace не входит.
+### Frontend — отдельно, свой `package.json` (pnpm), в Python-окружение не входит.
 
 ### Корень репо, итог
 
@@ -544,13 +492,13 @@ analytics = { workspace = true }
 keshaking/
 ├── README.md
 ├── Makefile
-├── pyproject.toml          # uv workspace
+├── pyproject.toml          # одно окружение на весь Python
 ├── uv.lock
 ├── .env.example
 ├── .gitignore
+├── .dockerignore
 ├── .github/
-│   ├── pull_request_template.md
-│   └── workflows/ci.yml    # ruff + pytest + pnpm build (опционально)
+│   └── pull_request_template.md
 ├── core/ ingest/ retrieval/ agent/ eval/ analytics/ backend/   # Python
 ├── frontend/                                                   # Node
 ├── deploy/ docs/ data/ models/ sandbox/
@@ -560,21 +508,22 @@ keshaking/
 
 ## 9. Бэклог на хакатон (после ТЗ)
 
-> Переносим на GitHub Project. Приоритет: P0 — без этого нет демо, P1 — сильно влияет на оценку, P2 — если успеем.
+> Переносим на GitHub Project. Приоритет: P0 — без этого нет демо, P1 — сильно влияет на оценку, P2 — за 48 часов по умолчанию **не делаем**.
 
 | P | Задача | Зависит от |
 |---|---|---|
-| P0 | Монорепо, uv workspace, `core/schemas.py` | контракты |
+| P0 | Монорепо: один `pyproject.toml`, `.dockerignore`, `core/schemas.py` по таблицам контрактов | контракты |
 | P0 | Backend: config, db, seed, health, auth | — |
 | P0 | Backend: `/chat/ask/stream` на mock-агенте | — |
 | P0 | Frontend: вход, чат, стрим шагов, карточка ответа, цитаты | backend mock |
 | P0 | Переключение на реального агента | 🤖 |
-| P0 | docker-compose: всё поднимается `make up` (👥 П4) | 📄 🤖 |
+| P0 | **Видео 3 мин одним дублем** по сценарию + описание на 1 страницу (с расчётом стоимости и компонентами) | все |
+| P1 | docker-compose: всё поднимается `make up` (👥 П4) — стенд жюри не нужен, это для надёжной записи видео | 📄 🤖 |
 | P1 | Логи QueryLog + AgentStepLog, фидбек 👍/👎 | — |
 | P1 | Документы: список, просмотрщик, подсветка пункта, история редакций | 🔎 |
 | P1 | Права доступа: фильтр + понятное сообщение об отказе по правам | 📄 🔎 |
 | P1 | Аналитика: API + дашборд (👥 П3) | 🔎 |
-| P1 | Офлайн-проверка на чистой машине | все |
+| P2 | Офлайн-проверка на чистой машине | все |
 | P2 | История сессий в сайдбаре | — |
 | P2 | Карточка конфликта бок о бок | 🤖 |
 | P2 | CI в GitHub Actions | — |
@@ -584,16 +533,18 @@ keshaking/
 
 ## 10. Самопроверка к 26.11
 
-Ответь «да» на всё:
+Ответь «да» на всё (никакого кода — только знания и проект):
 
+- [ ] **Задача выбрана в личном кабинете до 10:00 25.11**
 - [ ] Репо создан, все добавлены, `main` защищён, доска задач есть
-- [ ] Знаю, на каком железе крутится LLM на хакатоне и на демо
-- [ ] Могу за 10 минут поднять FastAPI с роутером, `Depends` и pydantic-моделями
-- [ ] Умею отдавать SSE из FastAPI и читать их на фронте из POST-запроса
-- [ ] Умею создать таблицу в SQLModel, записать, сделать агрегат (count/group by)
-- [ ] Могу создать Vite + React + TS + Tailwind + shadcn проект за 15 минут
-- [ ] Есть макеты 4 экранов
-- [ ] `docker compose up` поднимает хотя бы qdrant + ollama + игрушечный backend
+- [ ] Знаю, на каком железе крутится LLM в спринте и при записи видео
+- [ ] Знаю, как в FastAPI устроены роутер, `Depends`, pydantic-модели, SSE и threadpool
+- [ ] Знаю, как читать SSE из POST-запроса на фронте
+- [ ] Знаю, как в SQLModel сделать таблицу и агрегат (count/group by)
+- [ ] Знаю порядок команд, чтобы поднять Vite + React + TS + Tailwind + shadcn
+- [ ] Есть макеты 4 экранов (не в коде)
+- [ ] Есть сценарий видео на 3 минуты одним дублем и шаблон описания на 1 страницу
+- [ ] Схема compose расписана текстом, грабли из раздела 7 учтены
 - [ ] Понимаю каждое поле `AgentResult` и как его показать
 - [ ] Решено: React или Streamlit
 
