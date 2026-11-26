@@ -1,9 +1,10 @@
+import asyncio
 import json
 import os
 import secrets
 import sqlite3
 from collections.abc import Iterator
-from contextlib import asynccontextmanager, closing, contextmanager
+from contextlib import asynccontextmanager, closing, contextmanager, suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
@@ -18,6 +19,7 @@ from pydantic import BaseModel, StringConstraints
 from app.agent import AgentError, document_corpus_available, document_search_enabled, model_ready, run_agent
 from app.mocks.fake_agent import run_mock
 from app.mocks.knowledge import normalized_question
+from app.quality_mail import deliver_mail
 
 
 USERS = {
@@ -66,8 +68,24 @@ async def lifespan(_app):
                 status TEXT NOT NULL DEFAULT 'draft', confirmed_by TEXT, confirmed_at TEXT,
                 is_demo INTEGER NOT NULL DEFAULT 1
             );
+            CREATE TABLE IF NOT EXISTS quality_mail (
+                ticket_seq INTEGER PRIMARY KEY REFERENCES tickets(seq),
+                retry_at INTEGER NOT NULL DEFAULT 0,
+                sent_at INTEGER
+            );
         """)
-    yield
+    mail_worker = asyncio.create_task(deliver_mail(database)) if test_mail_enabled() else None
+    try:
+        yield
+    finally:
+        if mail_worker:
+            mail_worker.cancel()
+            with suppress(asyncio.CancelledError):
+                await mail_worker
+
+
+def test_mail_enabled():
+    return os.environ.get("PUNKT_TEST_MAIL") == "1"
 
 
 app = FastAPI(title="Пункт · локальный API", lifespan=lifespan)
@@ -197,6 +215,8 @@ def create_ticket(connection, user_id, session_id, question, reason):
     seq = connection.execute("SELECT seq FROM tickets WHERE dedup_key = ?", (dedup_key,)).fetchone()["seq"]
     ticket_id = f"Q-{seq:04d}"
     created = cursor.rowcount == 1
+    if created and test_mail_enabled():
+        connection.execute("INSERT INTO quality_mail (ticket_seq) VALUES (?)", (seq,))
     message = f"Обращение {ticket_id} {'создано' if created else 'уже существует'} в очереди службы качества."
     return {"ticket_id": ticket_id, "created": created, "message": message}
 

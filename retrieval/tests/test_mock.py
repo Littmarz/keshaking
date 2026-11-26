@@ -84,5 +84,21 @@ class TestQaEntries(unittest.TestCase):
         self.assertEqual(json.loads(mock.QA_PATH.read_text(encoding="utf-8").splitlines()[0])["qa_entry_id"], "qa-1")
 
 
+class TestConfirmedQuestions(unittest.TestCase):
+    def test_finds_paraphrase_without_drafts_or_other_directorates(self):
+        entry = {
+            "qa_entry_id": "published",
+            "question": "Сколько дней даётся на согласование ТКП с юристами?",
+            "directorate": "ИБ",
+            "status": "confirmed",
+        }
+        draft = {**entry, "qa_entry_id": "draft", "status": "draft"}
+        other_scope = {**entry, "qa_entry_id": "other", "directorate": "Техдирекция"}
+        matches = mock.search_confirmed_questions(
+            "В какой срок юридический отдел согласовывает ТКП по ИБ?", [draft, other_scope, entry],
+        )
+        self.assertEqual(matches, [entry])
+
+
 if __name__ == "__main__":
     unittest.main()

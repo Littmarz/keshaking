@@ -295,6 +295,30 @@ class _Index:
 _INDEX: _Index | None = None
 
 
+def search_confirmed_questions(query: str, entries: list[dict], k: int = 3) -> list[dict]:
+    """Ищет вопросы опубликованных разъяснений из базы приложения."""
+    scope, stripped = detect_directorates(query)
+    tokens = list(dict.fromkeys(tokenize(expand(stripped, skip=_DIRECTORATE_CANON))))
+    candidates = []
+    for entry in entries:
+        if entry.get("status") != "confirmed":
+            continue
+        entry_scope, _ = detect_directorates(entry.get("directorate") or entry["question"])
+        if scope and entry_scope and not set(scope).intersection(entry_scope):
+            continue
+        candidates.append(entry)
+    chunks = [
+        Chunk(entry["qa_entry_id"], "qa", "Служба качества", "", entry["question"])
+        for entry in candidates
+    ]
+    index = _Index([], chunks)
+    ranked = sorted(
+        ((index.score(tokens, i), i) for i in range(len(candidates))),
+        key=lambda match: -match[0],
+    )
+    return [candidates[i] for score, i in ranked[:k] if score > 0]
+
+
 def _index() -> _Index:
     global _INDEX
     if _INDEX is None:

@@ -30,6 +30,22 @@ curl -fsS http://127.0.0.1:8080/api/health
 AGENT_MODE=real AGENT_SOURCES=documents npm --prefix frontend run build:docker
 ```
 
+### Служба качества с тестовым почтовым ящиком
+
+```bash
+AGENT_MODE=real AGENT_SOURCES=documents PUNKT_TEST_MAIL=1 COMPOSE_PROFILES=quality-mail npm --prefix frontend run build:docker
+```
+
+Откройте Mailpit на `http://127.0.0.1:8025`. При создании обращения агент
+ставит письмо в очередь, и оно приходит в локальный тестовый ящик
+`quality@demo.invalid`. Порт ящика можно изменить через `PUNKT_MAIL_PORT`.
+Ответ и его подтверждение выполняются в разделе «Служба качества» в «Пункте».
+После подтверждения задайте вопрос другими словами в новом чате.
+
+Почта включается только для этого профиля запуска. При временной недоступности
+Mailpit очередь сохраняется в SQLite и отправка повторяется. Сам ящик хранится
+в отдельном томе `punkt-mail`.
+
 Номер виден внизу интерфейса. `build:docker` и `npm run build` из
 `frontend/` используют общий локальный счётчик `.punkt-build-number`.
 Первый запуск резервирует `0.0.1`, следующие увеличивают последний компонент.
