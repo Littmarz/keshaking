@@ -19,3 +19,13 @@
 | razdel, pymorphy3 | токенизация, леммы | MIT | |
 | FlagEmbedding | инференс bge | MIT | |
 | React, Vite, Tailwind, shadcn/ui, Recharts | frontend | MIT | |
+
+## Сборка демо через Docker Compose
+
+| Компонент | Для чего | Лицензия |
+|---|---|---|
+| [Node.js](https://github.com/nodejs/node/blob/main/LICENSE) 24, образ `node:24-bookworm-slim` | сборка React и Vite | MIT для Node.js |
+| [Python](https://docs.python.org/3/license.html) 3.12, образ `python:3.12-slim-bookworm` | среда FastAPI | PSF для Python |
+| [uv](https://github.com/astral-sh/uv/blob/main/docs/reference/policies/license.md) 0.13.10 | установка зависимостей Python в контейнере | MIT или Apache 2.0 |
+
+Компоненты Debian и сторонние зависимости в базовых образах распространяются под собственными лицензиями.

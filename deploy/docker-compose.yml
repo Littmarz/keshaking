@@ -1,0 +1,25 @@
+name: punkt
+
+services:
+  punkt:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    environment:
+      AGENT_MODE: mock
+      KESHAKING_DB_PATH: /var/lib/punkt/mock.sqlite3
+      PUNKT_WEB_DIR: /opt/punkt/web
+    ports:
+      - "127.0.0.1:${PUNKT_PORT:-8080}:8080"
+    volumes:
+      - punkt-data:/var/lib/punkt
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "/opt/punkt/backend/.venv/bin/python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8080/api/health', timeout=2).close()"]
+      interval: 5s
+      timeout: 3s
+      retries: 6
+      start_period: 5s
+
+volumes:
+  punkt-data:
