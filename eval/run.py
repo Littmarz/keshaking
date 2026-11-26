@@ -118,11 +118,58 @@ def run_retrieval(cases: list[dict], k: int) -> tuple[list[dict], dict]:
     return rows, summary
 
 
+def _judge(c: dict, statuses: list[str], last: dict, ms: float) -> dict:
+    """Общая проверка ответа агента (и для --target agent, и для --target api)."""
+    exp_st = c["expected_status"]
+    cites = last.get("citations") or []
+    cited = [(x.get("doc_id"), x.get("section"), x.get("source_type", "regulation")) for x in cites]
+    answer = last.get("answer") or ""
+    missing = [m for m in c.get("must_contain", []) if m.lower() not in answer.lower()]
+    src_ok = (all(any(_match(e, *g) for g in cited) for e in c.get("expected_sources", []))
+              if last.get("status") == "answered" else True)
+    leak = [f"{d}::{s}" for d, s, st in cited if any(_match(n, d, s, st) for n in c.get("must_not_cite", []))]
+    tok = _tokens(last)
+    return {
+        "id": c["id"], "category": c["category"], "query": " → ".join(c["turns"]),
+        "status_ok": statuses == exp_st, "statuses": statuses, "expected_status": exp_st,
+        "facts_ok": not missing, "missing": missing, "sources_ok": src_ok, "leak": leak,
+        "ms": round(ms), "answer": answer[:300], **tok,
+    }
+
+
+def _tokens(result: dict) -> dict:
+    """Токены запроса: из metrics (контракт) или суммой по steps[].detail (так их отдаёт агент Влада)."""
+    m = result.get("metrics") or {}
+    p, c, calls = m.get("prompt_tokens"), m.get("completion_tokens"), m.get("llm_calls")
+    if p is None:
+        details = [s.get("detail") or {} for s in result.get("steps") or []]
+        pt = [d.get("prompt_tokens") for d in details if d.get("prompt_tokens") is not None]
+        ct = [d.get("completion_tokens") for d in details if d.get("completion_tokens") is not None]
+        p, c, calls = (sum(pt) if pt else None), (sum(ct) if ct else None), (len(pt) or None)
+    return {"prompt_tokens": p, "completion_tokens": c, "llm_calls": calls}
+
+
+def _agent_summary(rows: list[dict], target: str) -> dict:
+    n = len(rows) or 1
+    with_tok = [r for r in rows if r.get("prompt_tokens") is not None]
+    return {
+        "target": target, "cases": len(rows),
+        "status_ok": round(sum(r["status_ok"] for r in rows) / n, 3),
+        "facts_ok": round(sum(r["facts_ok"] for r in rows) / n, 3),
+        "sources_ok": round(sum(r["sources_ok"] for r in rows) / n, 3),
+        "leaks": sum(bool(r["leak"]) for r in rows),
+        "p50_ms": sorted(r["ms"] for r in rows)[len(rows) // 2] if rows else 0,
+        "p95_ms": sorted(r["ms"] for r in rows)[min(len(rows) - 1, int(len(rows) * 0.95))] if rows else 0,
+        "avg_prompt_tokens": round(sum(r["prompt_tokens"] for r in with_tok) / len(with_tok)) if with_tok else None,
+        "avg_completion_tokens": round(sum(r["completion_tokens"] or 0 for r in with_tok) / len(with_tok)) if with_tok else None,
+    }
+
+
 def run_agent(cases: list[dict], k: int) -> tuple[list[dict], dict]:
     try:
         agent = importlib.import_module("agent.run")
     except ImportError as e:
-        sys.exit(f"agent.run ещё нет ({e}). Запусти с --target retrieval.")
+        sys.exit(f"agent.run ещё нет ({e}). Запусти с --target retrieval или --target api.")
     user = {"user_id": "eval", "name": "Eval", "department": "QA", "role": "employee", "allowed_access": ["all"]}
     rows = []
     for c in cases:
@@ -134,27 +181,61 @@ def run_agent(cases: list[dict], k: int) -> tuple[list[dict], dict]:
             statuses.append(r["status"])
             history += [{"role": "user", "content": turn}, {"role": "assistant", "content": r["answer"], "status": r["status"]}]
             last = r
-        ms = (time.perf_counter() - t0) * 1000
-        exp_st = c["expected_status"]
-        cited = [(x["doc_id"], x["section"]) for x in last.get("citations", [])]
-        missing = [m for m in c.get("must_contain", []) if m.lower() not in last["answer"].lower()]
-        src_ok = all(any(_match(e, d, s) for d, s in cited) for e in c.get("expected_sources", [])) if last["status"] == "answered" else True
-        leak = [f"{d}::{s}" for d, s in cited if any(_match(n, d, s) for n in c.get("must_not_cite", []))]
-        rows.append({
-            "id": c["id"], "category": c["category"], "query": " → ".join(c["turns"]),
-            "status_ok": statuses == exp_st, "statuses": statuses, "expected_status": exp_st,
-            "facts_ok": not missing, "missing": missing, "sources_ok": src_ok, "leak": leak,
-            "ms": round(ms), "answer": last["answer"][:300],
-        })
-    n = len(rows) or 1
-    summary = {
-        "target": "agent", "cases": len(rows),
-        "status_ok": round(sum(r["status_ok"] for r in rows) / n, 3),
-        "facts_ok": round(sum(r["facts_ok"] for r in rows) / n, 3),
-        "sources_ok": round(sum(r["sources_ok"] for r in rows) / n, 3),
-        "leaks": sum(bool(r["leak"]) for r in rows),
-        "p50_ms": sorted(r["ms"] for r in rows)[len(rows) // 2] if rows else 0,
-    }
+        rows.append(_judge(c, statuses, last, (time.perf_counter() - t0) * 1000))
+    return rows, _agent_summary(rows, "agent")
+
+
+class _Api:
+    """Минимальный клиент HTTP API «Пункта» (backend/app/main.py) на стандартной библиотеке."""
+
+    def __init__(self, base: str, timeout: float):
+        self.base, self.timeout = base.rstrip("/"), timeout
+
+    def call(self, method: str, path: str, body: dict | None = None, token: str | None = None) -> dict:
+        import urllib.request
+        data = json.dumps(body).encode("utf-8") if body is not None else None
+        req = urllib.request.Request(self.base + path, data=data, method=method,
+                                     headers={"Content-Type": "application/json",
+                                              **({"Authorization": f"Bearer {token}"} if token else {})})
+        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            return json.loads(resp.read().decode("utf-8") or "null")
+
+    def login(self, user_id: str) -> str:
+        return self.call("POST", "/auth/login", {"user_id": user_id})["token"]
+
+
+def run_api(cases: list[dict], k: int, base: str = "http://127.0.0.1:8000", timeout: float = 180) -> tuple[list[dict], dict]:
+    """Прогон через работающий стенд: каждый сценарий — новый чат; сценарий 3 — ответ и подтверждение от службы качества."""
+    api = _Api(base, timeout)
+    try:
+        health = api.call("GET", "/health")
+    except Exception as e:  # noqa: BLE001
+        sys.exit(f"Стенд не отвечает на {base}/health ({e}). Запусти backend или передай --base-url.")
+    emp, qual = api.login("employee"), api.login("quality")
+    rows, raw = [], []
+    for c in cases:
+        sid = api.call("POST", "/chat/sessions", {}, emp)["session_id"]
+        statuses, last, t0 = [], {}, time.perf_counter()
+        for turn in c["turns"]:
+            try:
+                last = api.call("POST", "/chat/ask", {"session_id": sid, "question": turn}, emp)
+            except Exception as e:  # noqa: BLE001 — ошибка стенда = провал сценария, прогон продолжаем
+                last = {"status": "error", "answer": f"Ошибка API: {e}"}
+            statuses.append(last.get("status"))
+        row = _judge(c, statuses, last, (time.perf_counter() - t0) * 1000)
+        if c.get("qa_confirm") and (last.get("ticket") or {}).get("ticket_id"):
+            q = c["qa_confirm"]
+            entry = api.call("POST", f"/tickets/{last['ticket']['ticket_id']}/answer",
+                             {k2: q.get(k2) for k2 in ("answer", "doc_id", "section", "directorate", "stage")}, qual)
+            api.call("POST", f"/qa/{entry['qa_entry_id']}/confirm", {}, qual)
+            row["answer"] += f"  [служба качества подтвердила ответ по {last['ticket']['ticket_id']}]"
+        rows.append(row)
+        raw.append({"id": c["id"], **last})
+    summary = _agent_summary(rows, "api")
+    summary["health"] = health
+    REPORTS.mkdir(parents=True, exist_ok=True)
+    (REPORTS / f"{dt.datetime.now():%Y-%m-%d_%H%M}_api_runs.jsonl").write_text(
+        "\n".join(json.dumps(r, ensure_ascii=False) for r in raw) + "\n", encoding="utf-8")
     return rows, summary
 
 
@@ -185,24 +266,32 @@ def report_md(rows: list[dict], summary: dict) -> str:
                 out.append(f"- **{r['id']}** «{r['query']}» — ждали {exp}; получили {', '.join(r['top'][:5])}"
                            + (f"; утечка {', '.join(r['leak'])}" if r["leak"] else ""))
     else:
-        out += ["| id | кат. | статусы | факты | источники | утечка | мс |", "|---|---|---|---|---|---|---|"]
+        out += ["| id | кат. | статусы | факты | источники | утечка | мс | токены вх/вых |", "|---|---|---|---|---|---|---|---|"]
         for r in rows:
             out.append(f"| {r['id']} | {r['category']} | {'✅' if r['status_ok'] else '❌'} {r['statuses']} | "
                        f"{'✅' if r['facts_ok'] else '❌ ' + ', '.join(r['missing'])} | {'✅' if r['sources_ok'] else '❌'} | "
-                       f"{', '.join(r['leak'])} | {r['ms']} |")
+                       f"{', '.join(r['leak'])} | {r['ms']} | {r.get('prompt_tokens')}/{r.get('completion_tokens')} |")
+        bad = [r for r in rows if not (r["status_ok"] and r["facts_ok"] and r["sources_ok"]) or r["leak"]]
+        if bad:
+            out += ["", "## Ответы с ошибками", ""] + [f"- **{r['id']}** {r['query']} → {r['statuses']}: {r['answer']}" for r in bad]
     return "\n".join(out) + "\n"
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--target", choices=["retrieval", "agent"], default="retrieval")
+    ap.add_argument("--target", choices=["retrieval", "agent", "api"], default="retrieval")
+    ap.add_argument("--base-url", default="http://127.0.0.1:8000", help="для --target api: backend «Пункта» (или http://127.0.0.1:8080/api)")
+    ap.add_argument("--timeout", type=float, default=180)
     ap.add_argument("--dataset", type=Path, default=DATASET)
     ap.add_argument("--k", type=int, default=5)
     ap.add_argument("--only", default="")
     ap.add_argument("--no-save", action="store_true")
     a = ap.parse_args()
     cases = load(a.dataset, set(a.only.split(",")) if a.only else None)
-    rows, summary = (run_retrieval if a.target == "retrieval" else run_agent)(cases, a.k)
+    if a.target == "api":
+        rows, summary = run_api(cases, a.k, a.base_url, a.timeout)
+    else:
+        rows, summary = (run_retrieval if a.target == "retrieval" else run_agent)(cases, a.k)
     md = report_md(rows, summary)
     sys.stdout.reconfigure(encoding="utf-8")
     print(md)

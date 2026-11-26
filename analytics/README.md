@@ -8,10 +8,10 @@
 
 ```bash
 python -m analytics.cost --estimate --price-in <₽ за 1 млн вх.> --price-out <₽ за 1 млн вых.>   # пока нет агента
-python -m analytics.cost --logs <jsonl с AgentResult>  --price-in … --price-out …               # по реальным usage
+python -m analytics.cost --logs eval/reports/<дата>_api_runs.jsonl --price-in … --price-out …     # по реальным usage прогона через стенд
 ```
 
-Оценка по корпусу (k = 5, 5 вызовов LLM): **≈ 7.6 тыс. входных + 0.7 тыс. выходных токенов на запрос**, ≈ 1.65 млн токенов в день при 200 запросах. Цены — с официальной страницы провайдера выбранной модели (так требуют организаторы). Агент должен класть `prompt_tokens`, `completion_tokens`, `llm_calls` в `AgentResult.metrics`.
+Оценка по корпусу (k = 5, 5 вызовов LLM): **≈ 7.6 тыс. входных + 0.7 тыс. выходных токенов на запрос**, ≈ 1.65 млн токенов в день при 200 запросах. Цены — с официальной страницы провайдера выбранной модели (так требуют организаторы). Токены берутся из `AgentResult.metrics` или, как сейчас у агента на Ollama, суммой по `steps[].detail.prompt_tokens / completion_tokens`.
 
 Источник: SQLite backend (`query_logs`, `agent_steps`). Используется в `/analytics/*` (🧭).
 

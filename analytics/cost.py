@@ -67,13 +67,24 @@ def estimate_request(k: int = 5, llm_calls: int = 5, system_tokens: int = 600, a
 
 
 def from_logs(path: Path) -> list[Usage]:
+    """jsonl с AgentResult: токены из metrics (контракт) или суммой по steps[].detail (агент на Ollama).
+
+    Подходит файл `eval/reports/*_api_runs.jsonl`, который пишет `python -m eval.run --target api`."""
     out = []
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
-        m = json.loads(line).get("metrics") or {}
-        if "prompt_tokens" in m:
-            out.append(Usage(int(m["prompt_tokens"]), int(m.get("completion_tokens", 0)), int(m.get("llm_calls", 1))))
+        r = json.loads(line)
+        m = r.get("metrics") or {}
+        p, c, calls = m.get("prompt_tokens"), m.get("completion_tokens"), m.get("llm_calls")
+        if p is None:
+            det = [s.get("detail") or {} for s in r.get("steps") or []]
+            pt = [d["prompt_tokens"] for d in det if d.get("prompt_tokens") is not None]
+            ct = [d["completion_tokens"] for d in det if d.get("completion_tokens") is not None]
+            if pt:
+                p, c, calls = sum(pt), sum(ct), len(pt)
+        if p is not None:
+            out.append(Usage(int(p), int(c or 0), int(calls or 1)))
     return out
 
 

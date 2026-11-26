@@ -50,6 +50,7 @@
 | chunk | Chunk | |
 | score | float | после реранкера |
 | bm25_score, dense_score | float? | отладка |
+| parents | list[{section, section_title, text}] | родительские пункты вложенного (1.1.1 → 1.1): условие часто задаёт родитель («На данном этапе SS проводит: …») |
 
 ## 2. Retrieval API (🔎 разработчик 3; индекс строит 📄)
 
