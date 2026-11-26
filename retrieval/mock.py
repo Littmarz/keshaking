@@ -30,6 +30,8 @@ from collections import Counter
 from dataclasses import asdict, dataclass, field
 from functools import lru_cache
 from pathlib import Path
+from xml.etree.ElementTree import ParseError
+from zipfile import BadZipFile
 
 ROOT = Path(__file__).resolve().parent.parent
 RAW_DIR = Path(os.environ.get("RAW_DIR", ROOT / "data" / "raw"))
@@ -231,14 +233,31 @@ def _chunks_from_jsonl(path: Path) -> list[Chunk]:
     return out
 
 
-def load_docx_corpus() -> tuple[list[Document], list[Chunk]]:
+def load_docx_corpus(*, require_complete: bool = False) -> tuple[list[Document], list[Chunk]]:
     from retrieval.docx_sections import parse_sections
 
+    paths: dict[str, Path] = {}
+    for path in RAW_DIR.glob("*"):
+        if path.suffix.lower() != ".docx" or path.name.startswith("~$") or not path.is_file():
+            continue
+        canonical_id = path.stem.lower()
+        doc_id = canonical_id if canonical_id in DOC_META else path.stem
+        if doc_id in paths:
+            raise ValueError(f"Повторяющийся doc_id {doc_id} у файлов {paths[doc_id].name} и {path.name}.")
+        paths[doc_id] = path
+
+    if require_complete:
+        missing = [f"{doc_id}.docx" for doc_id in sorted(DOC_META.keys() - paths.keys())]
+        if missing:
+            raise ValueError(f"Не найдены DOCX в {RAW_DIR}: {', '.join(missing)}")
+
     docs, chunks = [], []
-    for path in sorted(RAW_DIR.glob("*.docx")):
-        doc_id = path.stem
+    for doc_id, path in sorted(paths.items()):
         meta = DOC_META.get(doc_id, {})
-        title, sections = parse_sections(path)
+        try:
+            title, sections = parse_sections(path)
+        except (BadZipFile, KeyError, ParseError, ValueError) as error:
+            raise ValueError(f"Не удалось прочитать DOCX {path.name}. {error}") from error
         source = path.resolve()
         if source.is_relative_to(ROOT):
             source = source.relative_to(ROOT)

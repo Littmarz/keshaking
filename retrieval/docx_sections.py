@@ -81,6 +81,8 @@ def read_blocks(path: Path) -> list[str]:
     with zipfile.ZipFile(path) as z:
         body = ET.fromstring(z.read("word/document.xml")).find(W + "body")
         absd, nums = _numbering(z)
+    if body is None:
+        raise ValueError("В DOCX отсутствует тело документа.")
     counters: dict[str, dict[int, int]] = {}
     out: list[str] = []
     for el in body:
