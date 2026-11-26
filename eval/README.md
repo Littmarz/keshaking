@@ -33,10 +33,13 @@
 ```bash
 python -m eval.run                      # поиск: hit@k, recall@k, MRR, утечки чужих дирекций → eval/reports/
 python -m eval.run --only c04,c13       # отдельные сценарии
-python -m eval.run --target agent       # когда появится agent.run.run_agent (статусы по ходам, факты, источники)
+python -m eval.run --target api          # через работающий «Пункт» (backend :8000): статусы по ходам, факты, источники,
+                                        # задержка p50/p95, токены; сценарий 3 — ответ и подтверждение от службы качества
+python -m eval.run --target api --base-url http://127.0.0.1:8080/api   # через Docker-сборку
+python -m eval.run --target agent       # напрямую agent.run.run_agent, если появится
 ```
 
-Только стандартная библиотека. Отчёт — markdown в `eval/reports/<дата>_<target>.md`, строка метрик — в `eval/reports/progress.jsonl`.
+Только стандартная библиотека. Режим `api` дополнительно сохраняет сырые ответы в `eval/reports/<дата>_api_runs.jsonl` — их читает калькулятор стоимости (`python -m analytics.cost --logs …`). Отчёт — markdown в `eval/reports/<дата>_<target>.md`, строка метрик — в `eval/reports/progress.jsonl`.
 
 ```
 eval/

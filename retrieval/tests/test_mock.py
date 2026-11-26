@@ -79,6 +79,22 @@ class TestClarifyHint(unittest.TestCase):
     def test_unique_term_is_not_ambiguous(self):  # квал. анкета есть только в ДБРЦТ
         self.assertFalse(mock.search("Что будет, если в ЗНП нет квал анкеты?").ambiguous_scope)
 
+    def test_directorate_specific_role_is_not_ambiguous(self):  # TPS есть только в Техдирекции
+        self.assertFalse(mock.search("TPS говорит, что в заявке не хватает данных для РТЗ — что со сроками?").ambiguous_scope)
+
+
+@unittest.skipUnless(HAVE_DATA, "нет DOCX в data/raw/")
+class TestContextAndSynonyms(unittest.TestCase):
+    def test_nested_clause_gets_parent(self):
+        hit = next(h for h in mock.search("Что будет, если в ЗНП нет квал анкеты?").hits
+                   if h.chunk.chunk_id == "dbrct-project::1.1.1")
+        self.assertEqual(hit.parents[0]["section"], "1.1")
+        self.assertIn("квалификационной анкеты", hit.parents[0]["text"])
+
+    def test_preposition_po_is_not_software(self):
+        self.assertNotIn("Программное обеспечение", mock.search("Можно ли начать работы по проекту без договора?").expanded_query)
+        self.assertIn("Программное обеспечение", mock.search("Кто готовит спецификацию на ПО?").expanded_query)
+
 
 @unittest.skipUnless(HAVE_DATA, "нет DOCX в data/raw/")
 class TestQaEntries(unittest.TestCase):

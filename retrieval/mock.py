@@ -99,10 +99,13 @@ class Hit:
     score: float
     bm25_score: float | None = None
     dense_score: float | None = None
+    # Родительские пункты для вложенного (1.1.1 → 1.1): условие часто задаёт родитель
+    # («На данном этапе SS проводит: …»). Ближайший родитель — первым. Пункты-заголовки разделов не включаем.
+    parents: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {"chunk": self.chunk.to_dict(), "score": self.score,
-                "bm25_score": self.bm25_score, "dense_score": self.dense_score}
+                "bm25_score": self.bm25_score, "dense_score": self.dense_score, "parents": self.parents}
 
 
 @dataclass
@@ -164,7 +167,15 @@ def _synonyms() -> list[tuple[str, list[str]]]:
     return [(k, v) for k, v in data.items() if not k.startswith("_")]
 
 
-def _phrase_in(phrase: str, text_low: str) -> bool:
+def _is_abbr(phrase: str) -> bool:
+    """Короткое сокращение в верхнем регистре («ПО», «РП», «ТП», «SS»): ищем с учётом регистра,
+    иначе предлог «по» превращается в «программное обеспечение»."""
+    return len(phrase) <= 5 and phrase.isupper()
+
+
+def _phrase_in(phrase: str, text_low: str, text_orig: str = "") -> bool:
+    if _is_abbr(phrase) and text_orig:
+        return re.search(rf"(?<![A-Za-zА-Яа-яЁё0-9]){re.escape(phrase)}(?![A-Za-zА-Яа-яЁё0-9])", text_orig) is not None
     p = re.escape(phrase.lower().replace("ё", "е"))
     return re.search(rf"(?<![a-zа-я0-9]){p}(?![a-zа-я0-9])", text_low) is not None
 
@@ -183,15 +194,16 @@ _DIRECTORATE_CANON = {
 
 def detect_directorates(query: str) -> tuple[set[str], str]:
     """Найти упомянутые дирекции и убрать их из текста запроса (они — область, а не слова поиска)."""
-    low = query.lower().replace("ё", "е")
+    text = query.replace("ё", "е").replace("Ё", "Е")  # регистр сохраняем: он нужен сокращениям («ПО», «РП»)
     found = set()
     for name, rx in _DIRECTORATE_RE.items():
-        if rx.search(low):
+        rxi = re.compile(rx.pattern, re.I)
+        if rxi.search(text):
             found.add(name)
-            low = rx.sub(" ", low)
+            text = rxi.sub(" ", text)
     if found:
-        low = _DIRECTORATE_WORD_RE.sub(" ", low)
-    return found, low
+        text = re.compile(_DIRECTORATE_WORD_RE.pattern, re.I).sub(" ", text)
+    return found, text
 
 
 def expand(text: str, skip: set[str] | frozenset = frozenset()) -> str:
@@ -202,8 +214,8 @@ def expand(text: str, skip: set[str] | frozenset = frozenset()) -> str:
         if canon in skip:
             continue
         names = [canon, *aliases]
-        if any(_phrase_in(n, low) for n in names):
-            extra.extend(n for n in names if not _phrase_in(n, low))
+        if any(_phrase_in(n, low, text) for n in names):
+            extra.extend(n for n in names if not _phrase_in(n, low, text))
     return text + ("\n" + " ".join(extra) if extra else "")
 
 
@@ -275,6 +287,7 @@ class _Index:
         self.tf: list[Counter] = []
         self.len: list[int] = []
         df: Counter = Counter()
+        self.dirs_by_token: dict[str, set[str]] = {}
         for c in chunks:
             body = " ".join([*c.heading_path[-1:], c.section_title or "", c.text])
             toks = tokenize(expand(body))
@@ -282,9 +295,13 @@ class _Index:
             self.tf.append(tf)
             self.len.append(len(toks))
             df.update(tf.keys())
+            if c.source_type == "regulation" and c.directorate:
+                for tok in tf:
+                    self.dirs_by_token.setdefault(tok, set()).add(c.directorate)
         n = max(len(chunks), 1)
         self.avg = sum(self.len) / n if self.len else 1.0
         self.idf = {t: math.log(1 + (n - f + 0.5) / (f + 0.5)) for t, f in df.items()}
+        self.df = df
 
     def score(self, q: list[str], i: int, k1: float = 1.5, b: float = 0.75) -> float:
         tf, ln, s = self.tf[i], self.len[i], 0.0
@@ -332,15 +349,30 @@ LOW_SCORE = float(os.environ.get("LOW_SCORE_THRESHOLD_BM25", "0.25"))
 LOW_COVERAGE = float(os.environ.get("LOW_COVERAGE_THRESHOLD", "0.40"))
 # Неоднозначность области: среди top-AMBIG_TOP есть пункты ≥2 областей (дирекция+этап)
 # с баллом не ниже AMBIG_RATIO от лучшего — и при этом в вопросе дирекция не названа.
-AMBIG_TOP = int(os.environ.get("AMBIG_TOP", "5"))
-AMBIG_RATIO = float(os.environ.get("AMBIG_RATIO", "0.65"))
+AMBIG_TOP = int(os.environ.get("AMBIG_TOP", "8"))
+AMBIG_RATIO = float(os.environ.get("AMBIG_RATIO", "0.5"))
+# Термин, который встречается только в пунктах одной дирекции (TPS, «квалификационная анкета»),
+# сам задаёт область: уточнять не нужно. Нужен устойчивый термин (≥ UNIQUE_MIN_DF пунктов),
+# а не случайное слово, которое один раз встретилось в одном документе («подать»).
+UNIQUE_MIN_DF = int(os.environ.get("UNIQUE_MIN_DF", "2"))
 # Подтверждённые записи службы качества важнее пункта регламента (D-009, ответ организаторов 27.11).
 QA_BOOST = float(os.environ.get("QA_BOOST", "1.3"))
+QA_MIN_COVERAGE = float(os.environ.get("QA_MIN_COVERAGE", "0.45"))
 
 
 def _scope_label(c: "Chunk") -> str:
     parts = [p for p in (c.directorate, c.stage) if p]
     return ", ".join(parts) or c.doc_title
+
+
+def _implied_scope(idx: "_Index", q: list[str]) -> set[str]:
+    """Дирекции, которые однозначно задаются редкими словами вопроса."""
+    found: set[str] = set()
+    for tok in q:
+        dirs = idx.dirs_by_token.get(tok)
+        if dirs and len(dirs) == 1 and idx.df.get(tok, 0) >= UNIQUE_MIN_DF:
+            found |= dirs
+    return found
 
 
 def _ambiguity(hits: list["Hit"], scope: set[str], restricted_query: bool) -> tuple[bool, list[dict]]:
@@ -406,6 +438,9 @@ def search(
         if scope and c.directorate:
             s *= 1.5 if c.directorate in scope else 0.6
         if c.source_type == "qa_entry":
+            # запись качества — только если вопрос действительно про неё: иначе она «липнет» к соседним вопросам
+            if _coverage(idx, q, i) < QA_MIN_COVERAGE:
+                continue
             s *= QA_BOOST
         if allowed_access is not None and c.access_level not in allowed_access:
             restricted[c.doc_id] = c.doc_title
@@ -427,13 +462,15 @@ def search(
             _warn_once(f"гибридный поиск недоступен, работаю на BM25: {e}")
     hits = [Hit(chunk=idx.chunks[i], score=round(bm25.get(i, 0.0) / norm, 4), bm25_score=round(bm25.get(i, 0.0), 3),
                 dense_score=dense_scores.get(i)) for i in order[:k]]
+    for h in hits:
+        h.parents = get_parents(h.chunk)
     if mode != "bm25" and hits and hits[0].dense_score is not None:
         for h in hits:  # в гибриде финальный score — от реранкера/dense
             h.score = round(h.dense_score, 4)
     top_i = order[0] if order else None
     cov = _coverage(idx, q, top_i) if top_i is not None else 0.0
     top = hits[0].score if hits else None
-    amb, opts = _ambiguity(hits, scope, bool(doc_ids or directorate))
+    amb, opts = _ambiguity(hits, scope | _implied_scope(idx, q), bool(doc_ids or directorate))
     return SearchResult(
         hits=hits,
         restricted=[{"doc_id": d, "doc_title": t} for d, t in restricted.items()],
@@ -481,6 +518,19 @@ def get_document(doc_id: str) -> Document | None:
 def get_versions(doc_id: str) -> list[Document]:
     d = get_document(doc_id)
     return [d] if d else []  # в корпусе одна редакция на документ
+
+
+def get_parents(c: Chunk) -> list[dict]:
+    """Родительские пункты вложенного пункта регламента: «5.1.3.1» → [5.1.3, 5.1]."""
+    if c.source_type != "regulation":
+        return []
+    parts = c.section.split(".")
+    out = []
+    for n in range(len(parts) - 1, 1, -1):
+        p = get_section(c.doc_id, ".".join(parts[:n]))
+        if p:
+            out.append({"section": p.section, "section_title": p.section_title, "text": p.text})
+    return out
 
 
 def get_section(doc_id: str, section: str) -> Chunk | None:
