@@ -5,11 +5,10 @@
 
 | Компонент | Для чего | Лицензия | Используем? |
 |---|---|---|---|
-| Qwen3 (модель — по итогам бенча, D-004) | LLM | Apache 2.0 | |
+| Qwen3-8B (`qwen3:8b`, D-004) | LLM | Apache 2.0 | да |
 | BAAI/bge-m3 | эмбеддинги | MIT | |
 | BAAI/bge-reranker-v2-m3 | реранкер | Apache 2.0 | |
-| Ollama | запуск LLM | MIT | |
-| vLLM | запуск LLM (если выберем) | Apache 2.0 | |
+| Ollama | запуск LLM | MIT | да |
 | Qdrant | векторная БД | Apache 2.0 | |
 | LangGraph | граф агента | MIT | |
 | FastAPI, SQLModel | backend | MIT | |

@@ -1,23 +1,25 @@
-# deploy/ — docker-compose и офлайн-сборка
+# deploy/ — стенд
 
-**Владелец:** 🧭 Капитан (сервисы `qdrant` — 📄, `llm` — 🤖) · **Подробно:** [../docs/team/1-captain-backend-frontend.md §7](../docs/team/1-captain-backend-frontend.md#7-deploy-docker-compose-и-офлайн)
+**Владелец:** 🧭 Капитан · **Подробно:** [../docs/team/1-captain-backend-frontend.md §7](../docs/team/1-captain-backend-frontend.md#7-deploy-docker-compose-и-офлайн)
+
+Стенд нужен **по URL до 03.12 23:59 МСК**; по запросу до итогов — поднять за 24 ч.
+
+| Компонент | Где |
+|---|---|
+| Ollama + `qwen3:8b` | **нативно на Mac 24 ГБ** (Metal). В docker на Mac GPU недоступен |
+| backend, frontend, qdrant | docker-compose; backend ходит к LLM по `http://host.docker.internal:11434/v1` |
+| Доступ снаружи | туннель с HTTPS или VPS; проверять с телефона вне домашней сети |
 
 ```
 deploy/
-├── docker-compose.yml        # qdrant + llm + backend + frontend (GPU)
-├── docker-compose.cpu.yml    # без GPU
+├── docker-compose.yml        # qdrant + backend + frontend (без GPU-сервиса LLM)
 └── scripts/
-    ├── download_models.sh    # всё скачать заранее (интернет нужен один раз)
-    ├── save_images.sh        # docker save → .tar
-    ├── load_images.sh
-    └── offline_check.sh      # прогон без сети
+    ├── download_models.sh    # ollama pull qwen3:8b + bge-m3 в ./models (интернет один раз)
+    └── smoke.sh              # health + 3 вопроса из eval/datasets/control.jsonl
 ```
 
-## Цель
-
 ```bash
-make models   # один раз, с интернетом
-make up       # дальше — без интернета
-make ingest
-# UI: http://localhost:8080
+make models
+make up        # все compose-команды с --project-directory .
+make ingest    # 4 DOCX из data/raw/
 ```

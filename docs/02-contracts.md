@@ -1,78 +1,76 @@
 # Контракты между модулями
 
-> Это **главный документ для параллельной работы**. Каждый пишет свой модуль под эти интерфейсы, а пока соседний модуль не готов, использует заглушку (mock).
-> Изменения — только через PR с ревью **двух** человек (автор модуля-потребителя + капитан).
-> ⛔ До 10:00 26.11 контракты существуют **только как описание полей** (таблицы ниже). Код `core/schemas.py` пишем **после старта спринта** по этим таблицам — см. [00-conditions.md](00-conditions.md).
+> **Главный документ для параллельной работы.** Каждый пишет свой модуль под эти интерфейсы, а пока соседний модуль не готов — работает на заглушке.
+> Код — `core/schemas.py`, пишется по этим таблицам. Правки контракта и `core/schemas.py` — **только по согласованию команды** (PR + ревью двух человек: автор модуля-потребителя + капитан).
+> Обновлено 26.11: уточнение, обращения в службу качества, подтверждённые записи, дирекция и этап. Перед изменением общих схем — посмотреть на **реальные данные** из DOCX.
 
-Обозначения типов: `str?` — может быть пустым (None); `list[X]` — список; `date` — дата без времени; `datetime` — дата и время.
+Обозначения: `str?` — может быть пусто; `list[X]` — список; `date` — дата; `datetime` — дата и время.
 
-## 1. Данные (📄 разработчик 2 создаёт)
+## 1. Данные (📄 разработчик 2)
 
-`DocStatus` — одно из: `active`, `superseded`, `cancelled`, `unknown`.
+`DocStatus` — `active` | `superseded` | `cancelled` | `unknown`. Для нашего корпуса по умолчанию **`unknown`**: редакций и дат вступления в силу нет, дата изменения файла на Диске — не дата вступления.
 
 ### Document
 
-| Поле | Тип | Пример / смысл |
+| Поле | Тип | Смысл |
 |---|---|---|
-| doc_id | str | `reg-0042` |
-| title | str | «Регламент согласования договоров» |
-| doc_type | str | регламент / приказ / положение / продукт / … |
-| number | str? | «№ 15-П» |
-| version | str? | «ред. 3» |
-| approved_at | date? | |
-| effective_from | date? | |
-| effective_to | date? | |
-| status | DocStatus | вычисляется ingest-ом на дату `REFERENCE_DATE` (см. ниже) |
-| status_reason | str? | «заменён приказом № 22 от 01.03.2026» |
-| supersedes | list[str] | doc_id тех, кого заменяет (по умолчанию пусто) |
+| doc_id | str | стабильный: `ib-project`, `dbrct-project`, `tech-project`, `ib-presale` |
+| title | str | «Проектная деятельность Дирекции ИБ» |
+| doc_type | str | регламент / положение / … |
+| directorate | str? | `ИБ` / `ДБРЦТ` / `Техдирекция` — **из документа и его структуры** |
+| stage | str? | этап по умолчанию для документа: `проект` / `пресейл` / … |
+| number, version | str? | если есть в тексте |
+| effective_from, effective_to | date? | только если явно указано в тексте |
+| status | DocStatus | см. выше |
+| status_reason | str? | |
+| supersedes | list[str] | |
 | superseded_by | str? | |
-| access_level | str | `all` / `legal` / `sales` / `hr` / `management` (по умолчанию `all`) |
-| source_path | str | `data/raw/reg-0042.docx` |
+| access_level | str | `all` по умолчанию (матрицы прав нет; права — после обязательных сценариев) |
+| source_path | str | `data/raw/<файл>.docx` (локально, не в git) |
 
 ### Chunk
 
 | Поле | Тип | Смысл |
 |---|---|---|
-| chunk_id | str | `reg-0042::3.2.1` |
-| doc_id, doc_title | str | |
-| section | str | номер пункта `3.2.1` — **обязателен** для цитат |
-| section_title | str? | «Порядок подписания» |
-| heading_path | list[str] | `["3. Подписание", "3.2 Агентские договоры"]` |
-| text | str | чистый текст пункта (для цитаты) |
-| page | int? | |
-| status, version, effective_from, effective_to, access_level | — | **денормализовано** из Document — нужно для фильтров в Qdrant и для подписи цитаты. Меняется статус документа → переиндексация |
+| chunk_id | str | `ib-presale::1.3` — **стабильный** между переиндексациями |
+| source_type | str | `regulation` — пункт регламента; `qa_entry` — подтверждённая запись службы качества |
+| doc_id, doc_title | str | для `qa_entry` — регламент, к которому привязана запись |
+| section | str | номер пункта `1.3` — **обязателен** для цитаты |
+| section_title | str? | |
+| heading_path | list[str] | `["1. Пресейл", "1.3 Состав ТКП"]` |
+| text | str | чистый текст пункта **со всеми вложенными подпунктами, условиями и списками** (ветки «до 30% включительно» / «свыше 30%» в одном чанке) |
+| directorate, stage | str? | область применения пункта (денормализовано, для фильтров и check_scope) |
+| status, access_level | — | денормализовано из Document |
+| qa_entry_id | str? | для `source_type = qa_entry` |
 
 ### Hit
 
 | Поле | Тип | Смысл |
 |---|---|---|
 | chunk | Chunk | |
-| score | float | финальный (после реранкера) |
-| bm25_score, dense_score | float? | для отладки и eval |
+| score | float | после реранкера |
+| bm25_score, dense_score | float? | отладка |
 
-### Дата актуальности
-
-Статус «действует» зависит от даты. Берём её из конфига `REFERENCE_DATE` (по умолчанию — сегодня), **а не из системных часов**, иначе результаты eval зависят от дня запуска.
-
-## 2. Retrieval API (🔎 разработчик 3 → 🤖 разработчик 4, 🧭 капитан; индекс строит 📄 разработчик 2)
+## 2. Retrieval API (🔎 разработчик 3; индекс строит 📄)
 
 | Функция | Параметры | Возвращает |
 |---|---|---|
-| `search` | query; k = 8; allowed_access (пусто = без ограничений); statuses (по умолчанию `active` + `unknown`); doc_ids (искать только в них) | `SearchResult` |
+| `search` | query; k = 8; allowed_access (пусто = без ограничений); statuses (по умолчанию `active` + `unknown` — **иначе весь наш корпус отфильтруется**); doc_ids; directorate?; stage?; include_qa = true | `SearchResult` |
 | `get_document` | doc_id | Document |
-| `get_versions` | doc_id | все редакции, от новой к старой |
+| `get_versions` | doc_id | редакции, от новой к старой (у нас обычно одна) |
 | `get_section` | doc_id, section | Chunk или пусто |
 | `list_documents` | allowed_access | список Document |
+| `upsert_qa_entry` | QAEntry (только `confirmed`) | — публикует запись в индекс |
 
 ### SearchResult
 
 | Поле | Тип | Смысл |
 |---|---|---|
-| hits | list[Hit] | найденное с учётом прав и статусов |
-| restricted | list[{doc_id, doc_title}] | документы, которые **нашлись бы**, но закрыты правами пользователя. Без текста! Нужно агенту, чтобы сказать «документ есть, но у вас нет доступа» |
-| top_score | float? | лучший скор реранкера среди hits |
+| hits | list[Hit] | регламенты и подтверждённые записи вместе, у каждого `source_type` |
+| restricted | list[{doc_id, doc_title}] | нашлось бы, но закрыто правами (пока пусто) |
+| top_score | float? | |
 
-> Почему не `only_active: bool`: нужно решить, что делать со `status=unknown` (дат нет). Решение: ищем по `active` и `unknown`, агент предупреждает про `unknown`.
+> Высокий балл поиска ≠ применимость. Проверку дирекции и этапа делает агент (`check_scope`).
 
 ## 3. Agent API (🤖 разработчик 4 → 🧭 капитан)
 
@@ -81,129 +79,146 @@
 | Поле | Тип |
 |---|---|
 | user_id, name, department | str |
+| role | `employee` / `quality` / `admin` |
 | allowed_access | list[str] |
 
 ### Citation
 
 | Поле | Тип | Смысл |
 |---|---|---|
-| chunk_id | str | для подсветки пункта в просмотрщике |
-| doc_id, doc_title | str | |
-| section | str | |
-| version | str? | для подписи «п. 3.2.1 · ред. 3 ✓» |
-| effective_from | date? | |
-| status | DocStatus | |
-| quote | str | короткая дословная цитата из пункта |
+| chunk_id | str | подсветка пункта в просмотрщике |
+| source_type | str | `regulation` / `qa_entry` |
+| doc_id, doc_title, section | str | |
+| directorate, stage | str? | показать область применения рядом с цитатой |
+| quote | str | короткая дословная цитата (проверяется кодом) |
+| qa_entry_id | str? | для подтверждённого знания: «подтверждено службой качества, обращение №…» |
 
 ### AgentStep
 
 | Поле | Тип | Смысл |
 |---|---|---|
-| name | str | analyze / plan / retrieve / grade / rewrite / check_actuality / check_conflicts / generate / verify / finalize / refuse |
-| title | str | человекочитаемо: «Ищу: порядок подписания договоров» |
-| detail | dict | что угодно для отладки: подзапросы, top-скоры, отброшенные редакции |
+| name | str | analyze / clarify / plan / retrieve / grade / rewrite / check_scope / check_conflicts / generate / verify / escalate / finalize |
+| title | str | человекочитаемо: «Уточняю дирекцию и этап» |
+| detail | dict | подзапросы, top-скоры, отброшенные пункты |
 | started_at | datetime | |
 | duration_ms | int | |
 
-`AnswerStatus` — одно из: `answered`, `partial`, `refused`, `conflict`.
+`AnswerStatus`:
+
+| Статус | Когда |
+|---|---|
+| `answered` | ответ по регламентам и/или подтверждённым записям |
+| `partial` | ответ на часть вопроса, по остальному — причина |
+| `needs_clarification` | нужен факт от сотрудника; в `clarification` — один конкретный вопрос; ход закончен |
+| `escalated` | ответа нет → создано обращение в службу качества; в `ticket` — номер и что дальше |
+| `conflict` | два применимых источника противоречат, правило не решает; показываем оба и причину |
+| `refused` | ответить нельзя (вне темы, неоднозначность не разрешилась после уточнения) |
 
 ### AgentResult
 
 | Поле | Тип | Смысл |
 |---|---|---|
 | status | AnswerStatus | |
-| answer | str | markdown; цитаты в тексте **только как `[1]`, `[2]`** |
-| citations | list[Citation] | позиция в списке (с 1) = номер `[n]` в тексте |
-| reason | str? | почему отказ / в чём противоречие |
+| answer | str | markdown; цитаты в тексте **только `[1]`, `[2]`** |
+| citations | list[Citation] | позиция (с 1) = номер `[n]` |
+| reason | str? | почему отказ / в чём противоречие / почему эскалация |
+| clarification | {question, options?} ? | для `needs_clarification`: вопрос и, если уместно, варианты-кнопки |
+| ticket | {ticket_id, created: bool, message} ? | для `escalated`: номер обращения; `created=false`, если обращение по этому вопросу уже было |
 | steps | list[AgentStep] | |
-| metrics | {n_hits, top_score, n_retrieval_rounds} | сразу для лога — backend не выковыривает их из `steps` |
-| model | str | `qwen3:14b` |
+| metrics | {n_hits, top_score, n_retrieval_rounds} | для логов |
+| model | str | `qwen3:8b` |
 | latency_ms | int | |
 
 ### Функции
 
 | Функция | Параметры | Возвращает |
 |---|---|---|
-| `run_agent` | question, user: UserContext, history (последние реплики, может быть пусто) | AgentResult |
-| `run_agent_stream` | то же | поток: несколько AgentStep, последним — AgentResult |
+| `run_agent` | question, user, history | AgentResult |
+| `run_agent_stream` | то же | несколько AgentStep, последним — AgentResult |
 
-## 4. HTTP API (🧭 backend → 🧭 frontend)
+`history` — последние реплики сессии `[{role, content, status?}]`. Если последний ответ агента был `needs_clarification`, analyze склеивает исходный вопрос и ответ пользователя в один самостоятельный вопрос.
+
+**Обращение создаёт backend, не агент**: агент возвращает `status = escalated` и `reason`; `agent_service` вызывает `create_ticket(session_id, question)` — идемпотентно по (session_id, нормализованный вопрос) — и подставляет `ticket` в результат.
+
+## 4. Служба качества (🧭 хранение и форма, 🔎 публикация в поиск)
+
+### Ticket (обращение)
+
+| Поле | Тип | Смысл |
+|---|---|---|
+| ticket_id | str | `Q-0007` — показываем сотруднику |
+| created_at | datetime | |
+| user_id, session_id | str | |
+| question | str | вопрос после склейки с уточнениями |
+| context | json | что искал агент: подзапросы, ближайшие пункты |
+| status | `open` / `answered` / `published` / `rejected` | |
+| dedup_key | str | нормализованный вопрос + session_id — **одно обращение на вопрос** |
+
+### QAEntry (подтверждённое знание)
+
+| Поле | Тип | Смысл |
+|---|---|---|
+| qa_entry_id | str | |
+| ticket_id | str | |
+| question | str | |
+| answer | str | ответ сотрудника качества |
+| doc_id, section | str? | **привязка к регламенту** |
+| directorate, stage | str? | область применения |
+| confirmed_by, confirmed_at | str, datetime | |
+| status | `draft` / `confirmed` | в поиск попадает **только `confirmed`** |
+| is_demo | bool | учебный ответ для демо — так и подписываем |
+
+## 5. HTTP API (🧭 backend → 🧭 frontend)
 
 | Метод | Путь | Тело / параметры | Ответ |
 |---|---|---|---|
-| GET | `/health` | — | `{db, qdrant, llm: "ok"/"down"}` |
-| GET | `/auth/users` | — | список мок-пользователей для экрана входа |
+| GET | `/health` | — | `{db, search, llm: "ok"/"down"}` |
+| GET | `/auth/users` | — | мок-пользователи (сотрудники и сотрудник качества) |
 | POST | `/auth/login` | `{user_id}` | `{token, user}` |
-| GET | `/auth/me` | header `Authorization: Bearer` | `user` |
+| GET | `/auth/me` | Bearer | user |
 | POST | `/chat/sessions` | — | `{session_id}` |
-| GET | `/chat/sessions` | — | список сессий пользователя |
-| GET | `/chat/sessions/{id}` | — | сообщения сессии |
-| POST | `/chat/ask` | `{session_id, question}` | `AgentResult` + `message_id` |
-| POST | `/chat/ask/stream` | `{session_id, question}` | **SSE**, см. ниже |
+| GET | `/chat/sessions` · `/chat/sessions/{id}` | — | сессии / сообщения |
+| POST | `/chat/ask` | `{session_id, question}` | AgentResult + `message_id` |
+| POST | `/chat/ask/stream` | `{session_id, question}` | **SSE** |
 | POST | `/feedback` | `{message_id, value: 1/-1, comment?}` | `{ok}` |
-| GET | `/documents` | `?status=active` | список `Document` (с учётом прав) |
-| GET | `/documents/{doc_id}` | — | `Document` + все чанки (для просмотрщика) |
-| GET | `/documents/{doc_id}/versions` | — | история редакций |
-| GET | `/analytics/summary` | `?from&to` | KPI: всего, % отвечено, % отказов, 👍/👎, среднее время |
-| GET | `/analytics/failed` | `?limit` | неудачные запросы с причиной |
-| GET | `/analytics/topics` | — | топ тем/кластеров |
-| GET | `/analytics/gaps` | — | «чего нет в базе» |
-| GET | `/analytics/timeline` | — | запросы и время ответа по дням/часам |
-| POST | `/admin/reindex` | — | запуск переиндексации (**только роль admin**) |
+| GET | `/documents` · `/documents/{doc_id}` | — | список / документ + пункты |
+| GET | `/tickets` | `?status=open` | очередь (роль `quality`) |
+| GET | `/tickets/{id}` | — | обращение + контекст поиска |
+| POST | `/tickets/{id}/answer` | `{answer, doc_id?, section?, directorate?, stage?}` | QAEntry (`draft`) |
+| POST | `/qa/{qa_entry_id}/confirm` | — | QAEntry (`confirmed`) → `upsert_qa_entry` |
+| GET | `/qa` | — | опубликованные записи |
+| GET | `/analytics/summary` | — | KPI (после обязательных сценариев) |
 
-`/analytics/*` и `/admin/*` — только для пользователя с ролью admin (на демо это видно как «права»).
+Ошибки связи с моделью или поиском — событие `error` / HTTP 503 с текстом «Модель недоступна», **не** ответ агента.
 
-### SSE-события `/chat/ask/stream`
+### SSE `/chat/ask/stream`
 
 | event | data |
 |---|---|
-| `step` | AgentStep, например `name=retrieve`, `title="Ищу: лимиты полномочий"`, `detail.top_score=0.82`, `duration_ms=340` |
-| `step` | `name=check_actuality`, `title="Отбросил ред. 2 (заменена ред. 3 от 01.03.2026)"` |
+| `step` | AgentStep |
 | `result` | AgentResult + `message_id` |
-| `error` | `{message: "LLM недоступна"}` |
+| `error` | `{message}` |
 
-## 5. Лог-событие (🧭 пишет → 🔎 читает)
+## 6. Логи (🧭 пишет → 🔎 читает)
 
-Таблица `query_logs` (SQLite):
+`query_logs`: `id (= message_id), ts, user_id, session_id, question, status, answer, citations (json), clarification (json), ticket_id, n_hits, top_score, n_retrieval_rounds, latency_ms, model, feedback, feedback_comment`.
+`agent_steps`: `message_id, idx, name, title, detail (json), duration_ms`.
 
-| Поле | Тип | Описание |
-|---|---|---|
-| id | str | = message_id |
-| ts | datetime | время запроса |
-| user_id, department | str | кто спросил |
-| session_id | str | |
-| question | str | |
-| status | str | answered / partial / refused / conflict / error |
-| answer | str | |
-| citations | json | список Citation |
-| n_hits | int | из `AgentResult.metrics` |
-| top_score | float | из `AgentResult.metrics` |
-| n_retrieval_rounds | int | из `AgentResult.metrics` |
-| restricted_docs | json | документы, закрытые правами (для аналитики «спрашивают то, к чему нет доступа») |
-| latency_ms | int | |
-| model | str | |
-| feedback | int / null | +1 / −1 |
-| feedback_comment | str / null | |
+Логи нужны для отладки, демо и **расчёта стоимости** (задержка, токены, запросов в день).
 
-Таблица `agent_steps`: `message_id, idx, name, title, detail(json), duration_ms`.
+## 7. Контрольный набор (🔎 ведёт, все используют)
 
-**Неудачный поиск** (для аналитики) = любое из: `status in (refused, error)`, `top_score < LOW_SCORE_THRESHOLD`, `feedback = -1`, `n_retrieval_rounds ≥ 2`.
+`eval/datasets/control.jsonl`, строка = один сценарий:
 
-## 6. Тестовый набор (готовит Claude, проверяет и использует 🔎 → все)
-
-`eval/datasets/<name>.jsonl`, одна строка = один вопрос. Поля:
-
-| Поле | Пример |
+| Поле | Смысл |
 |---|---|
-| id | `q001` |
-| question | «Кто подписывает агентский договор?» |
-| expected_answer | «Директор по продажам при сумме до 1 млн, свыше — генеральный директор» |
-| expected_sources | `[{doc_id: "reg-0042", section: "3.2.1"}]` |
-| category | см. ниже |
-| expected_status | `answered` |
-| user_id | от чьего имени спрашиваем (важно для `access`) |
+| id | `c01` |
+| turns | список реплик пользователя по порядку (для уточнения — две и больше) |
+| expected_status | итоговый статус; для многоходовых — по ходам: `["needs_clarification", "answered"]` |
+| expected_sources | `[{doc_id, section}]` |
+| must_contain | ключевые факты, которые должны быть в ответе (`"более пяти рабочих дней"`) |
+| must_not_cite | источники, которых быть не должно (чужая дирекция) |
+| category | `single` · `clarify` · `multi` · `boundary` · `escalate` · `conflict` |
 | notes | |
 
-`category`: `single` (один пункт) · `multi` (несколько регламентов) · `outdated` (ловушка на старую редакцию) · `conflict` (противоречие) · `no_answer` (ответа в базе нет) · `access` (зависит от прав) · `license` (правила лицензирования продуктов).
-
-Тестовые вопросы — это **данные**, а не код, их можно готовить до старта. Но реальные данные дадут только 26.11.
+Эталонного набора от организаторов **нет** — набор составляем сами по 4 DOCX.
