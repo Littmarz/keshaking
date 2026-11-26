@@ -6,7 +6,9 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile
     environment:
-      AGENT_MODE: mock
+      AGENT_MODE: ${AGENT_MODE:-mock}
+      LLM_BASE_URL: ${LLM_BASE_URL:-http://host.docker.internal:11434}
+      LLM_MODEL: ${LLM_MODEL:-qwen3:8b}
       KESHAKING_DB_PATH: /var/lib/punkt/mock.sqlite3
       PUNKT_WEB_DIR: /opt/punkt/web
     ports:

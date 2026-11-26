@@ -15,6 +15,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, StringConstraints
 
+from app.agent import AgentError, model_ready, run_agent
 from app.mocks.fake_agent import run_mock
 from app.mocks.knowledge import normalized_question
 
@@ -40,8 +41,8 @@ def database():
 
 @asynccontextmanager
 async def lifespan(_app):
-    if os.environ.get("AGENT_MODE", "mock") != "mock":
-        raise RuntimeError("This starter supports AGENT_MODE=mock only.")
+    if os.environ.get("AGENT_MODE", "mock") not in ("mock", "real"):
+        raise RuntimeError("AGENT_MODE must be mock or real.")
     with database() as connection:
         connection.executescript("""
             CREATE TABLE IF NOT EXISTS sessions (
@@ -69,7 +70,7 @@ async def lifespan(_app):
     yield
 
 
-app = FastAPI(title="Пункт · локальный mock API", lifespan=lifespan)
+app = FastAPI(title="Пункт · локальный API", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -123,7 +124,8 @@ def require_session(connection, session_id, user_id):
 def health():
     with database() as connection:
         connection.execute("SELECT 1")
-    return {"db": "ok", "search": "down", "llm": "down"}
+    ready = os.environ.get("AGENT_MODE") == "real" and model_ready()
+    return {"db": "ok", "search": "down", "llm": "ok" if ready else "down"}
 
 
 @app.get("/auth/users")
@@ -201,15 +203,34 @@ def ask_and_save(payload, user):
     session_id, question = payload.session_id, payload.question
     with database() as connection:
         require_session(connection, session_id, user["user_id"])
-        connection.execute("BEGIN IMMEDIATE")
         rows = connection.execute(
-            "SELECT role, content, status FROM messages WHERE session_id = ? ORDER BY seq DESC LIMIT 12",
+            "SELECT seq, role, content, status FROM messages WHERE session_id = ? ORDER BY seq DESC LIMIT 12",
             (session_id,),
         ).fetchall()
         history = [dict(row) for row in reversed(rows)]
-        result = run_mock(question, history, knowledge_entries(connection, status="confirmed"))
+        last_seq = rows[0]["seq"] if rows else None
+        confirmed_entries = knowledge_entries(connection, status="confirmed")
+    real_mode = os.environ.get("AGENT_MODE") == "real"
+    run = run_agent if real_mode else run_mock
+    try:
+        result = run(question, history, confirmed_entries)
+    except AgentError as exc:
+        raise HTTPException(502, str(exc)) from exc
+
+    with database() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        current_seq = connection.execute(
+            "SELECT MAX(seq) FROM messages WHERE session_id = ?", (session_id,),
+        ).fetchone()[0]
+        if current_seq != last_seq:
+            raise HTTPException(409, "В этом чате уже появился другой ответ. Повторите запрос.")
         if result["status"] == "escalated":
-            result["ticket"] = create_ticket(connection, user["user_id"], session_id, question, result["reason"])
+            ticket_question = question
+            if real_mode and len(history) >= 2 and history[-1]["status"] == "needs_clarification":
+                ticket_question = f"{history[-2]['content']}\nУточнение: {question}"
+            result["ticket"] = create_ticket(
+                connection, user["user_id"], session_id, ticket_question, result["reason"],
+            )
             result["answer"] += " " + result["ticket"]["message"]
         result["message_id"] = uuid4().hex
         connection.executemany(

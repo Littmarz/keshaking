@@ -24,3 +24,17 @@ cp .env.example .env
 uv run uvicorn app.main:app --reload --port 8000
 # http://localhost:8000/docs
 ```
+
+### Локальная Qwen
+
+Запустите Ollama на Mac и проверьте наличие `qwen3:8b` командой `ollama list`.
+Из папки `backend/` запустите API в режиме модели:
+
+```bash
+AGENT_MODE=real uv run --python 3.12 uvicorn app.main:app --port 8000
+```
+
+`LLM_BASE_URL` по умолчанию указывает на `http://127.0.0.1:11434`, а
+`LLM_MODEL` — на `qwen3:8b`. Агент вызывает нативный `/api/chat` Ollama
+и добавляет счётчики токенов в `steps[].detail`. Сейчас источники — учебные
+пункты и подтверждённые записи службы качества, доступные демо.
