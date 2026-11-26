@@ -48,9 +48,15 @@ class TestSearch(unittest.TestCase):
     def test_contract_shape(self):
         res = mock.search("Кто отвечает за коммуникации с заказчиком?", k=3)
         d = res.to_dict()
-        self.assertEqual(set(d), {"hits", "restricted", "top_score", "expanded_query"})
+        self.assertTrue({"hits", "restricted", "top_score"} <= set(d))
         self.assertIn("chunk_id", d["hits"][0]["chunk"])
         self.assertEqual(d["hits"][0]["chunk"]["source_type"], "regulation")
+
+
+    def test_low_confidence_hint(self):
+        self.assertTrue(mock.search("Какой дресс-код в офисе?").low_confidence)
+        self.assertFalse(mock.search("Кто назначает РП на проект ИБ?").low_confidence)
+        self.assertEqual(mock.search("Кто назначает РП на проект ИБ?").scope, ["ИБ"])
 
 
 @unittest.skipUnless(HAVE_DATA, "нет DOCX в data/raw/")

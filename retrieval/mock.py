@@ -111,10 +111,16 @@ class SearchResult:
     restricted: list[dict] = field(default_factory=list)
     top_score: float | None = None
     expanded_query: str = ""  # отладка: запрос после синонимов
+    coverage: float | None = None  # доля «веса» слов запроса (по idf), найденных в лучшем пункте
+    low_confidence: bool = False   # подсказка агенту: похоже, в регламентах ответа нет (НЕ решение)
+    scope: list[str] = field(default_factory=list)  # дирекции, распознанные в вопросе
+    mode: str = "bm25"             # bm25 | hybrid | hybrid+rerank
 
     def to_dict(self) -> dict:
         return {"hits": [h.to_dict() for h in self.hits], "restricted": self.restricted,
-                "top_score": self.top_score, "expanded_query": self.expanded_query}
+                "top_score": self.top_score, "expanded_query": self.expanded_query,
+                "coverage": self.coverage, "low_confidence": self.low_confidence,
+                "scope": self.scope, "mode": self.mode}
 
 
 # ---------------------------------------------------------------- текст
@@ -313,6 +319,18 @@ def reload() -> None:
 
 # ---------------------------------------------------------------- API (контракт §2)
 
+# Пороги подсказки «ответа, скорее всего, нет». Подобраны на eval/datasets/control.jsonl:
+# лексические признаки отделяют только явно посторонние вопросы (дресс-код, отпуск, лицензии
+# при реорганизации), а «похожие, но не про это» — нет. Окончательно решает агент (grade моделью).
+LOW_SCORE = float(os.environ.get("LOW_SCORE_THRESHOLD_BM25", "0.25"))
+LOW_COVERAGE = float(os.environ.get("LOW_COVERAGE_THRESHOLD", "0.40"))
+
+
+def _coverage(idx: "_Index", q: list[str], i: int) -> float:
+    total = sum(idx.idf.get(t, 0.0) for t in q)
+    got = sum(idx.idf.get(t, 0.0) for t in q if t in idx.tf[i])
+    return round(got / total, 3) if total else 0.0
+
 def search(
     query: str,
     k: int = 8,
@@ -353,13 +371,63 @@ def search(
             continue
         scored.append((s, i))
     scored.sort(key=lambda x: -x[0])
-    hits = [Hit(chunk=idx.chunks[i], score=round(s / norm, 4), bm25_score=round(s, 3)) for s, i in scored[:k]]
+    mode = "bm25"
+    order = [i for _, i in scored]
+    bm25 = {i: s for s, i in scored}
+    dense_scores: dict[int, float] = {}
+    if _hybrid_enabled():
+        try:
+            from retrieval import dense
+            order, dense_scores, mode = dense.hybrid_rank(query, idx.chunks, order, k=k,
+                                                          allowed=lambda i: _passes(idx.chunks[i], statuses, doc_ids,
+                                                                                    directorate, stage, include_qa,
+                                                                                    allowed_access))
+        except Exception as e:  # нет пакетов/модели — тихо остаёмся на BM25
+            _warn_once(f"гибридный поиск недоступен, работаю на BM25: {e}")
+    hits = [Hit(chunk=idx.chunks[i], score=round(bm25.get(i, 0.0) / norm, 4), bm25_score=round(bm25.get(i, 0.0), 3),
+                dense_score=dense_scores.get(i)) for i in order[:k]]
+    if mode != "bm25" and hits and hits[0].dense_score is not None:
+        for h in hits:  # в гибриде финальный score — от реранкера/dense
+            h.score = round(h.dense_score, 4)
+    top_i = order[0] if order else None
+    cov = _coverage(idx, q, top_i) if top_i is not None else 0.0
+    top = hits[0].score if hits else None
     return SearchResult(
         hits=hits,
         restricted=[{"doc_id": d, "doc_title": t} for d, t in restricted.items()],
-        top_score=hits[0].score if hits else None,
+        top_score=top,
         expanded_query=eq,
+        coverage=cov,
+        low_confidence=(not hits) or (mode == "bm25" and (top < LOW_SCORE or cov < LOW_COVERAGE)),
+        scope=sorted(scope),
+        mode=mode,
     )
+
+
+def _passes(c: Chunk, statuses, doc_ids, directorate, stage, include_qa, allowed_access) -> bool:
+    if c.source_type == "qa_entry" and not include_qa:
+        return False
+    if c.status not in statuses or (doc_ids and c.doc_id not in doc_ids):
+        return False
+    if directorate and c.directorate and c.directorate != directorate:
+        return False
+    if stage and c.stage and c.stage != stage:
+        return False
+    return allowed_access is None or c.access_level in allowed_access
+
+
+def _hybrid_enabled() -> bool:
+    return os.environ.get("RETRIEVAL_MODE", "auto") != "bm25"
+
+
+_WARNED: set[str] = set()
+
+
+def _warn_once(msg: str) -> None:
+    if msg not in _WARNED:
+        _WARNED.add(msg)
+        import sys
+        print(f"[retrieval] {msg}", file=sys.stderr)
 
 
 def get_document(doc_id: str) -> Document | None:

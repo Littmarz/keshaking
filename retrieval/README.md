@@ -20,6 +20,8 @@ res.to_dict()   # JSON для SSE / логов
 - BM25 + лёгкий стеммер + синонимы из [`synonyms.json`](synonyms.json) (глоссарий заказчика).
 - Дирекция в вопросе («ИБ», «ДБРЦТ», «Техдирекция») — **буст области**, а не слова поиска; пункты-заголовки понижены.
 - Записи службы качества: `upsert_qa_entry({..., "status": "confirmed"})` → `data/processed/qa_entries.jsonl` → ищутся с `source_type = "qa_entry"`. Черновики не попадают.
+- **Подсказка «ответа нет»**: `res.low_confidence` (низкий балл или мало слов вопроса нашлось). Ловит явно посторонние вопросы («дресс-код», «отпуск»), но не «похожие, но не про это» — это решает агент.
+- **Гибридный поиск** [`dense.py`](dense.py): bge-m3 + RRF + реранкер включаются **сами**, если стоят `numpy`, `FlagEmbedding` и модели в `models/hf/`. Иначе — BM25 и одно предупреждение. `RETRIEVAL_MODE=bm25` — принудительно BM25, `RERANK=0` — без реранкера. ⚠️ На машине разработчика 3 нет доступа к PyPI/HF, модуль ещё не запускался — первый прогон на Mac: `python -m eval.run` против `RETRIEVAL_MODE=bm25 python -m eval.run`.
 - Отладка: `python -m retrieval.mock "ваш вопрос"`; тесты: `python -m unittest discover -s retrieval/tests -t .`
 - Качество на контрольном наборе: см. [../eval/reports/](../eval/reports/) (на 26.11: hit@5 = 0.93, MRR = 0.80).
 
