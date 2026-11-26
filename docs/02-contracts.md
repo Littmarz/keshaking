@@ -69,6 +69,10 @@
 | hits | list[Hit] | регламенты и подтверждённые записи вместе, у каждого `source_type` |
 | restricted | list[{doc_id, doc_title}] | нашлось бы, но закрыто правами (пока пусто) |
 | top_score | float? | |
+| coverage | float? | доля «веса» слов запроса (idf), найденных в лучшем пункте |
+| low_confidence | bool | подсказка «в регламентах, похоже, ответа нет» (явно посторонний вопрос). **Не решение** — эскалацию решает агент после grade моделью |
+| scope | list[str] | дирекции, распознанные в вопросе («ИБ», «ДБРЦТ», «Техдирекция») — пригодится для clarify/check_scope |
+| mode | str | `bm25` / `hybrid` / `hybrid+rerank` |
 
 > Высокий балл поиска ≠ применимость. Проверку дирекции и этапа делает агент (`check_scope`).
 
@@ -125,7 +129,7 @@
 | clarification | {question, options?} ? | для `needs_clarification`: вопрос и, если уместно, варианты-кнопки |
 | ticket | {ticket_id, created: bool, message} ? | для `escalated`: номер обращения; `created=false`, если обращение по этому вопросу уже было |
 | steps | list[AgentStep] | |
-| metrics | {n_hits, top_score, n_retrieval_rounds} | для логов |
+| metrics | {n_hits, top_score, n_retrieval_rounds, **prompt_tokens, completion_tokens, llm_calls**} | для логов и **экономики** (сумма usage по всем вызовам LLM за запрос) |
 | model | str | `qwen3:8b` |
 | latency_ms | int | |
 
