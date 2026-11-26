@@ -115,12 +115,15 @@ class SearchResult:
     low_confidence: bool = False   # подсказка агенту: похоже, в регламентах ответа нет (НЕ решение)
     scope: list[str] = field(default_factory=list)  # дирекции, распознанные в вопросе
     mode: str = "bm25"             # bm25 | hybrid | hybrid+rerank
+    ambiguous_scope: bool = False  # подсказка для clarify: подходящие пункты из РАЗНЫХ дирекций/этапов, а в вопросе их нет
+    scope_options: list[dict] = field(default_factory=list)  # варианты для уточняющего вопроса (лучший пункт каждой области)
 
     def to_dict(self) -> dict:
         return {"hits": [h.to_dict() for h in self.hits], "restricted": self.restricted,
                 "top_score": self.top_score, "expanded_query": self.expanded_query,
                 "coverage": self.coverage, "low_confidence": self.low_confidence,
-                "scope": self.scope, "mode": self.mode}
+                "scope": self.scope, "mode": self.mode,
+                "ambiguous_scope": self.ambiguous_scope, "scope_options": self.scope_options}
 
 
 # ---------------------------------------------------------------- текст
@@ -324,6 +327,39 @@ def reload() -> None:
 # при реорганизации), а «похожие, но не про это» — нет. Окончательно решает агент (grade моделью).
 LOW_SCORE = float(os.environ.get("LOW_SCORE_THRESHOLD_BM25", "0.25"))
 LOW_COVERAGE = float(os.environ.get("LOW_COVERAGE_THRESHOLD", "0.40"))
+# Неоднозначность области: среди top-AMBIG_TOP есть пункты ≥2 областей (дирекция+этап)
+# с баллом не ниже AMBIG_RATIO от лучшего — и при этом в вопросе дирекция не названа.
+AMBIG_TOP = int(os.environ.get("AMBIG_TOP", "5"))
+AMBIG_RATIO = float(os.environ.get("AMBIG_RATIO", "0.65"))
+# Подтверждённые записи службы качества важнее пункта регламента (D-009, ответ организаторов 27.11).
+QA_BOOST = float(os.environ.get("QA_BOOST", "1.3"))
+
+
+def _scope_label(c: "Chunk") -> str:
+    parts = [p for p in (c.directorate, c.stage) if p]
+    return ", ".join(parts) or c.doc_title
+
+
+def _ambiguity(hits: list["Hit"], scope: set[str], restricted_query: bool) -> tuple[bool, list[dict]]:
+    if scope or restricted_query or not hits:
+        return False, []
+    top = hits[0].score or 0.0
+    best: dict[tuple, Hit] = {}
+    for h in hits[:AMBIG_TOP]:
+        c = h.chunk
+        if c.source_type != "regulation" or not c.directorate:
+            continue
+        if top and h.score < AMBIG_RATIO * top:
+            continue
+        key = (c.directorate, c.stage)
+        if key not in best:
+            best[key] = h
+    if len(best) < 2:
+        return False, []
+    opts = [{"directorate": k[0], "stage": k[1], "label": _scope_label(h.chunk), "doc_id": h.chunk.doc_id,
+             "doc_title": h.chunk.doc_title, "section": h.chunk.section, "score": h.score}
+            for k, h in best.items()]
+    return True, opts
 
 
 def _coverage(idx: "_Index", q: list[str], i: int) -> float:
@@ -366,6 +402,8 @@ def search(
             s *= 0.5  # пункт-заголовок раздела («2. Назначение РП») — сам по себе не ответ
         if scope and c.directorate:
             s *= 1.5 if c.directorate in scope else 0.6
+        if c.source_type == "qa_entry":
+            s *= QA_BOOST
         if allowed_access is not None and c.access_level not in allowed_access:
             restricted[c.doc_id] = c.doc_title
             continue
@@ -392,6 +430,7 @@ def search(
     top_i = order[0] if order else None
     cov = _coverage(idx, q, top_i) if top_i is not None else 0.0
     top = hits[0].score if hits else None
+    amb, opts = _ambiguity(hits, scope, bool(doc_ids or directorate))
     return SearchResult(
         hits=hits,
         restricted=[{"doc_id": d, "doc_title": t} for d, t in restricted.items()],
@@ -401,6 +440,8 @@ def search(
         low_confidence=(not hits) or (mode == "bm25" and (top < LOW_SCORE or cov < LOW_COVERAGE)),
         scope=sorted(scope),
         mode=mode,
+        ambiguous_scope=amb,
+        scope_options=opts,
     )
 
 

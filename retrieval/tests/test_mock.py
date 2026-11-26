@@ -60,6 +60,20 @@ class TestSearch(unittest.TestCase):
 
 
 @unittest.skipUnless(HAVE_DATA, "нет DOCX в data/raw/")
+class TestClarifyHint(unittest.TestCase):
+    def test_abstract_question_is_ambiguous(self):
+        res = mock.search("Что будет, если по заявке не хватает информации?")
+        self.assertTrue(res.ambiguous_scope)
+        self.assertGreaterEqual(len({o["directorate"] for o in res.scope_options}), 2)
+
+    def test_explicit_directorate_is_not_ambiguous(self):
+        self.assertFalse(mock.search("Кто назначает РП на проекты ИБ?").ambiguous_scope)
+
+    def test_unique_term_is_not_ambiguous(self):  # квал. анкета есть только в ДБРЦТ
+        self.assertFalse(mock.search("Что будет, если в ЗНП нет квал анкеты?").ambiguous_scope)
+
+
+@unittest.skipUnless(HAVE_DATA, "нет DOCX в data/raw/")
 class TestQaEntries(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
