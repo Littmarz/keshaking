@@ -45,25 +45,54 @@ def _text_of(el: ET.Element) -> str:
     return "".join(parts)
 
 
-def _numbering(z: zipfile.ZipFile) -> tuple[dict, dict]:
-    """abstractNumId -> {ilvl: (numFmt, lvlText, start)}; numId -> abstractNumId."""
+_NumberingLevel = tuple[str, str, int]
+
+
+def _read_level(level: ET.Element) -> _NumberingLevel:
+    fmt = level.find(W + "numFmt")
+    text = level.find(W + "lvlText")
+    start = level.find(W + "start")
+    return (
+        fmt.get(W + "val", "decimal") if fmt is not None else "decimal",
+        text.get(W + "val", "") if text is not None else "",
+        int(start.get(W + "val", "1")) if start is not None else 1,
+    )
+
+
+def _numbering(z: zipfile.ZipFile) -> dict[str, dict[int, _NumberingLevel]]:
+    """Вернёт уровни нумерации каждого списка Word с учётом его переопределений."""
     try:
         root = ET.fromstring(z.read("word/numbering.xml"))
     except KeyError:
-        return {}, {}
-    absd: dict = {}
-    for a in root.findall(W + "abstractNum"):
-        lv = {}
-        for lvl in a.findall(W + "lvl"):
-            fmt, txt, st = lvl.find(W + "numFmt"), lvl.find(W + "lvlText"), lvl.find(W + "start")
-            lv[int(lvl.get(W + "ilvl"))] = (
-                fmt.get(W + "val") if fmt is not None else "decimal",
-                txt.get(W + "val") if txt is not None else "",
-                int(st.get(W + "val")) if st is not None else 1,
-            )
-        absd[a.get(W + "abstractNumId")] = lv
-    nums = {n.get(W + "numId"): n.find(W + "abstractNumId").get(W + "val") for n in root.findall(W + "num")}
-    return absd, nums
+        return {}
+    abstracts = {
+        abstract.get(W + "abstractNumId"): {
+            int(level.get(W + "ilvl", "0")): _read_level(level)
+            for level in abstract.findall(W + "lvl")
+        }
+        for abstract in root.findall(W + "abstractNum")
+    }
+    numbering: dict[str, dict[int, _NumberingLevel]] = {}
+    for instance in root.findall(W + "num"):
+        num_id = instance.get(W + "numId")
+        reference = instance.find(W + "abstractNumId")
+        if not num_id or reference is None:
+            continue
+        inherited = abstracts.get(reference.get(W + "val"))
+        if inherited is None:
+            continue
+        levels = inherited.copy()
+        for override in instance.findall(W + "lvlOverride"):
+            index = int(override.get(W + "ilvl", "0"))
+            level = override.find(W + "lvl")
+            if level is not None:
+                levels[index] = _read_level(level)
+            start = override.find(W + "startOverride")
+            if start is not None:
+                fmt, template, _ = levels.get(index, ("decimal", f"%{index + 1}.", 1))
+                levels[index] = (fmt, template, int(start.get(W + "val", "1")))
+        numbering[num_id] = levels
+    return numbering
 
 
 def _fmt(f: str, n: int) -> str:
@@ -80,7 +109,7 @@ def read_blocks(path: Path) -> list[str]:
     """Абзацы (с автонумерацией Word, если она есть) и строки таблиц по порядку."""
     with zipfile.ZipFile(path) as z:
         body = ET.fromstring(z.read("word/document.xml")).find(W + "body")
-        absd, nums = _numbering(z)
+        numbering = _numbering(z)
     if body is None:
         raise ValueError("В DOCX отсутствует тело документа.")
     counters: dict[str, dict[int, int]] = {}
@@ -92,13 +121,12 @@ def read_blocks(path: Path) -> list[str]:
                 continue
             np_ = el.find(f"{W}pPr/{W}numPr")
             if np_ is not None and np_.find(W + "numId") is not None:
-                nid = np_.find(W + "numId").get(W + "val")
+                nid = np_.find(W + "numId").get(W + "val", "")
                 il = np_.find(W + "ilvl")
                 ilvl = int(il.get(W + "val")) if il is not None else 0
-                aid = nums.get(nid)
-                if aid is not None and aid in absd:
-                    lv = absd[aid]
-                    c = counters.setdefault(aid, {})
+                lv = numbering.get(nid)
+                if lv is not None:
+                    c = counters.setdefault(nid, {})
                     c[ilvl] = c.get(ilvl, lv.get(ilvl, ("", "", 1))[2] - 1) + 1
                     for k in [k for k in c if k > ilvl]:
                         del c[k]
@@ -115,7 +143,10 @@ def read_blocks(path: Path) -> list[str]:
             out.append(t)
         elif el.tag == W + "tbl":
             for tr in el.findall(W + "tr"):
-                cells = [_text_of(tc).strip().replace("\n", " ") for tc in tr.findall(W + "tc")]
+                cells = []
+                for cell in tr.findall(W + "tc"):
+                    paragraphs = [_text_of(paragraph).strip() for paragraph in cell.iter(W + "p")]
+                    cells.append(" ".join(paragraph for paragraph in paragraphs if paragraph).replace("\n", " "))
                 if any(cells):
                     out.append(f"| {' | '.join(cells)} |")
     return out
@@ -133,12 +164,15 @@ def parse_sections(path: Path) -> tuple[str, list[Section]]:
     blocks = read_blocks(path)
     if not blocks:
         return path.stem, []
-    doc_title = blocks[0]
+    if _NUM_RE.match(blocks[0]):
+        doc_title, body = path.stem, blocks
+    else:
+        doc_title, body = blocks[0], blocks[1:]
     sections: list[Section] = []
     cur: Section | None = None
     top = 0
     top_title = ""
-    body = blocks[1:]
+    last_nested_item: int | None = None
     nums = [(_NUM_RE.match(b).group(1) if _NUM_RE.match(b) else None) for b in body]
 
     def next_num(i: int) -> str | None:
@@ -154,25 +188,30 @@ def parse_sections(path: Path) -> tuple[str, list[Section]]:
             num, rest = m.group(1), m.group(2).strip()
             parts = [int(p) for p in num.split(".")]
             nxt = next_num(i)
-            # «N.» — новый раздел, только если следом идёт «N.1.» (иначе это вложенный список)
-            is_heading = nxt is None or nxt.startswith(f"{parts[0]}.")
-            if len(parts) == 1 and parts[0] == top + 1 and is_heading:
-                top = parts[0]
+            major = parts[0]
+            has_subsections = nxt is not None and nxt.startswith(f"{major}.")
+            is_flat_section = (nxt is None or nxt == str(major + 1)) and last_nested_item != major - 1
+            if len(parts) == 1 and major == top + 1 and (has_subsections or is_flat_section):
+                top = major
                 top_title = f"{num}. {rest}"
                 cur = Section(num, rest, [doc_title, top_title], [f"{num}. {rest}"])
                 sections.append(cur)
                 accepted = True
-            elif len(parts) >= 2 and parts[0] in (top, top + 1) and top > 0:
-                if parts[0] == top + 1:  # раздел без отдельного заголовка
-                    top = parts[0]
+            elif len(parts) >= 2 and major > 0 and major in (top, top + 1):
+                if major == top + 1:  # раздел без отдельного заголовка
+                    top = major
                     top_title = f"{top}."
                 title = rest.split(".")[0][:120] if rest else None
                 cur = Section(num, title, [doc_title, top_title], [f"{num}. {rest}"])
                 sections.append(cur)
                 accepted = True
-        if not accepted:
-            if cur is None:
-                cur = Section("0", "Вводная часть", [doc_title], [])
-                sections.append(cur)
-            cur.lines.append(_clean_bullet(raw))
+        if accepted:
+            last_nested_item = None
+            continue
+        if cur is None:
+            cur = Section("0", "Вводная часть", [doc_title], [])
+            sections.append(cur)
+        if m and len(parts) == 1 and "." in cur.section:
+            last_nested_item = major
+        cur.lines.append(_clean_bullet(raw))
     return doc_title, sections
