@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite --strictPort",
-    "build": "tsc --noEmit && vite build",
+    "build": "node scripts/build.mjs",
+    "build:docker": "node scripts/build.mjs --docker",
     "preview": "vite preview --strictPort"
   },
   "dependencies": {

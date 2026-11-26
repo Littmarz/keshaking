@@ -5,6 +5,8 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
+      args:
+        PUNKT_BUILD_VERSION: ${PUNKT_BUILD_VERSION:-}
     environment:
       AGENT_MODE: ${AGENT_MODE:-mock}
       LLM_BASE_URL: ${LLM_BASE_URL:-http://host.docker.internal:11434}

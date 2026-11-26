@@ -1,9 +1,9 @@
 # Запуск демо «Пункт» через Docker Compose
 
-Нужен Docker с Compose v2. Откройте терминал в корне репозитория и выполните:
+Нужны Node.js с npm и Docker Compose. В корне репозитория выполните:
 
 ```bash
-docker compose -f deploy/docker-compose.yml up --build -d --wait
+npm --prefix frontend run build:docker
 ```
 
 Откройте `http://127.0.0.1:8080`. Интерфейс и API работают на одном порту. Сборка подтягивает образы и зависимости. После запуска Docker держит контейнер в фоне. Если порт занят, задайте другой через `PUNKT_PORT`.
@@ -12,13 +12,20 @@ docker compose -f deploy/docker-compose.yml up --build -d --wait
 `qwen3:8b` и включите режим модели при запуске контейнера:
 
 ```bash
-AGENT_MODE=real docker compose -f deploy/docker-compose.yml up --build -d --wait
+AGENT_MODE=real npm --prefix frontend run build:docker
 curl -fsS http://127.0.0.1:8080/api/health
 ```
 
 Поле `llm` должно быть `ok`. По умолчанию контейнер обращается к Ollama
 через `http://host.docker.internal:11434`. Адрес и модель можно задать
 через `LLM_BASE_URL` и `LLM_MODEL`. Прогоны ниже используют учебные источники.
+
+Номер виден внизу интерфейса. `build:docker` и `npm run build` из
+`frontend/` используют общий локальный счётчик `.punkt-build-number`.
+Первый запуск резервирует `0.0.1`, следующие увеличивают последний компонент.
+У каждой рабочей копии свой счётчик. Перезапуск готового контейнера сохраняет
+номер. При прямом вызове Docker Compose можно передать готовый номер через
+`PUNKT_BUILD_VERSION`.
 
 Три учебных сценария запускаются кнопками в интерфейсе. Для третьего сценария подтвердите разъяснение в «Службе качества», откройте новый чат и задайте «За сколько дней юристы согласуют ТКП?».
 

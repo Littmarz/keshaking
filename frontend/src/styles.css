@@ -20,6 +20,8 @@ h1, h2, p { margin: 0; }
 
 .site {
   min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
   background: radial-gradient(ellipse at 88% 7%, #d4ede0 0%, transparent 35%),
     linear-gradient(152deg, #f9fbfa 0%, #edf5f2 58%, #e8f0ec 100%);
 }
@@ -38,7 +40,8 @@ h1, h2, p { margin: 0; }
 .environment { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 650; color: var(--muted); }
 .live-dot { width: 8px; height: 8px; border-radius: 50%; background: #287c63; box-shadow: 0 0 0 3px #d8eee4; flex: none; }
 
-.workspace { display: grid; grid-template-columns: 220px minmax(0, 1fr); max-width: 1480px; margin: 0 auto; padding: 32px clamp(18px, 4vw, 60px) 70px; gap: 24px; }
+.workspace { display: grid; grid-template-columns: 220px minmax(0, 1fr); width: 100%; max-width: 1480px; margin: 0 auto; padding: 32px clamp(18px, 4vw, 60px) 70px; gap: 24px; }
+.build-footer { align-self: center; margin-top: auto; padding: 0 18px 16px; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .sidebar { align-self: start; display: grid; gap: 18px; padding-top: 8px; }
 .sidebar nav { display: grid; gap: 7px; }
 .nav-link, .new-chat {

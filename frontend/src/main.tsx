@@ -214,6 +214,11 @@ function App() {
           )}
         </main>
       </div>
+      <footer className="build-footer">
+        {import.meta.env.VITE_PUNKT_BUILD_VERSION
+          ? `Сборка ${import.meta.env.VITE_PUNKT_BUILD_VERSION}`
+          : 'Сборка без номера'}
+      </footer>
       {source && <SourceDialog source={source} close={() => setSource(null)} />}
     </div>
   );
