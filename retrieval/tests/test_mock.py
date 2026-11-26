@@ -22,6 +22,13 @@ class TestParsing(unittest.TestCase):
         self.assertIn("не более 30%", s13.text)
         self.assertIn("более 30%", s13.text)
 
+    def test_ib_project_table_preserves_empty_cells(self):
+        _, sections = parse_sections(RAW / "ib-project.docx")
+        section = next(section for section in sections if section.section == "1.2")
+        rows = [line for line in section.lines if line.startswith("|")]
+        self.assertEqual(rows[0], "| Обязательно | При наличии |")
+        self.assertEqual(sum(row.startswith("|  | ") for row in rows), 3)
+
     def test_key_clauses_exist(self):
         for doc, sec, needle in [("ib-project", "2.3", "5 рабочих дней"), ("dbrct-project", "1.1.1", "анкет"),
                                  ("tech-project", "1.3", "Заявку на расчёт")]:

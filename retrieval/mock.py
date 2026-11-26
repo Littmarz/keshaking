@@ -219,7 +219,7 @@ def _chunks_from_jsonl(path: Path) -> list[Chunk]:
     return out
 
 
-def _chunks_from_docx() -> tuple[list[Document], list[Chunk]]:
+def load_docx_corpus() -> tuple[list[Document], list[Chunk]]:
     from retrieval.docx_sections import parse_sections
 
     docs, chunks = [], []
@@ -227,7 +227,10 @@ def _chunks_from_docx() -> tuple[list[Document], list[Chunk]]:
         doc_id = path.stem
         meta = DOC_META.get(doc_id, {})
         title, sections = parse_sections(path)
-        docs.append(Document(doc_id=doc_id, title=title, source_path=str(path.relative_to(ROOT)),
+        source = path.resolve()
+        if source.is_relative_to(ROOT):
+            source = source.relative_to(ROOT)
+        docs.append(Document(doc_id=doc_id, title=title, source_path=source.as_posix(),
                              **{k: meta.get(k) for k in ("directorate", "stage")},
                              doc_type=meta.get("doc_type", "регламент")))
         seen: Counter = Counter()
@@ -309,7 +312,7 @@ def _index() -> _Index:
                      for l in docs_path.read_text(encoding="utf-8").splitlines() if l.strip()]
                     if docs_path.exists() else [])
         else:
-            docs, chunks = _chunks_from_docx()
+            docs, chunks = load_docx_corpus()
         _INDEX = _Index(docs, chunks + _qa_chunks())
     return _INDEX
 

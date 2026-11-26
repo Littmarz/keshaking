@@ -1,8 +1,4 @@
-"""Временный разбор DOCX на пункты для заглушки поиска (только стандартная библиотека).
-
-Это НЕ основной ingest (зона разработчика 2). Нужен, чтобы агент и eval работали
-до появления data/processed/chunks.jsonl. Когда chunks.jsonl появится, retrieval.mock
-читает его, а этот модуль не используется.
+"""Разбор DOCX на пункты для выгрузки и запуска поиска напрямую из регламентов.
 
 Правила разбора (проверены на 4 DOCX заказчика):
 - номера пунктов в документах — обычный текст («2.3. …»), не автонумерация Word;
@@ -118,9 +114,8 @@ def read_blocks(path: Path) -> list[str]:
         elif el.tag == W + "tbl":
             for tr in el.findall(W + "tr"):
                 cells = [_text_of(tc).strip().replace("\n", " ") for tc in tr.findall(W + "tc")]
-                cells = [c for c in cells if c]
-                if cells:
-                    out.append(" | ".join(cells))
+                if any(cells):
+                    out.append(f"| {' | '.join(cells)} |")
     return out
 
 

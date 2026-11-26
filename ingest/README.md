@@ -2,7 +2,11 @@
 
 **Владелец:** 📄 Разработчик 2 — Документы · **Подробный план:** [../docs/team/2-documents.md](../docs/team/2-documents.md)
 
-`data/raw/*.docx` (4 регламента заказчика, не в git) → python-docx → дерево пунктов → чанки (1 чанк = 1 пункт со всеми подпунктами и условиями) → `doc_id`, `section`, **дирекция, этап** → `data/processed/chunks.jsonl`
+Положи `ib-project.docx`, `ib-presale.docx`, `dbrct-project.docx` и `tech-project.docx` в `data/raw/`. Из корня репозитория запусти `python -m ingest.run` на Python 3.12. Команда использует стандартную библиотеку Python.
+
+В `data/processed/` появятся `documents.jsonl` с метаданными и `chunks.jsonl` с пунктами. Поиск подхватит выгрузку при следующем запуске. На демо достаточно подключить эту папку через том `data` в Compose.
+
+Пути можно задать через `RAW_DIR` и `PROCESSED_DIR`. Каталог `data/` игнорируется Git.
 
 ```
 ingest/
