@@ -19,10 +19,20 @@
 
 По каждому прогону фиксируем: точность вывода, корректность цитат (есть в тексте и подтверждают вывод), правильность уточнения / эскалации / отказа, задержку. Задержки и объём запросов — в калькулятор стоимости.
 
+## Запуск
+
+```bash
+python -m eval.run                      # поиск: hit@k, recall@k, MRR, утечки чужих дирекций → eval/reports/
+python -m eval.run --only c04,c13       # отдельные сценарии
+python -m eval.run --target agent       # когда появится agent.run.run_agent (статусы по ходам, факты, источники)
+```
+
+Только стандартная библиотека. Отчёт — markdown в `eval/reports/<дата>_<target>.md`, строка метрик — в `eval/reports/progress.jsonl`.
+
 ```
 eval/
 ├── datasets/control.jsonl
-├── run.py        прогон по turns (многоходовые — в одной сессии, c08 — в новой)
+├── run.py        ✅ прогон по turns (многоходовые — в одной сессии, c08 — в новой)
 ├── metrics/      citations · status · latency
 ├── report.py     таблица по сценариям + худшие ошибки
 └── reports/
