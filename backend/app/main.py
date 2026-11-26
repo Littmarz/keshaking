@@ -15,7 +15,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, StringConstraints
 
-from app.agent import AgentError, model_ready, run_agent
+from app.agent import AgentError, document_corpus_available, document_search_enabled, model_ready, run_agent
 from app.mocks.fake_agent import run_mock
 from app.mocks.knowledge import normalized_question
 
@@ -124,8 +124,10 @@ def require_session(connection, session_id, user_id):
 def health():
     with database() as connection:
         connection.execute("SELECT 1")
-    ready = os.environ.get("AGENT_MODE") == "real" and model_ready()
-    return {"db": "ok", "search": "down", "llm": "ok" if ready else "down"}
+    real_mode = os.environ.get("AGENT_MODE") == "real"
+    llm_ready = real_mode and model_ready()
+    search_ready = real_mode and document_search_enabled() and document_corpus_available()
+    return {"db": "ok", "search": "ok" if search_ready else "down", "llm": "ok" if llm_ready else "down"}
 
 
 @app.get("/auth/users")

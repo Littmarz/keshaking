@@ -7,6 +7,8 @@ from operator import ge, gt, le, lt
 from time import perf_counter
 from typing import Literal
 from urllib.request import Request, urlopen
+from xml.etree.ElementTree import ParseError
+from zipfile import BadZipFile
 
 from pydantic import BaseModel
 
@@ -165,7 +167,7 @@ def model_ready() -> bool:
         return False
 
 
-def demo_sources(question, confirmed_entries):
+def demo_sources():
     sources = [
         {
             "chunk_id": f"{doc_id}::{section}",
@@ -191,21 +193,53 @@ def demo_sources(question, confirmed_entries):
         "quote": "Тестовую заявку проверяет координатор.",
         "qa_entry_id": None,
     })
-    entry = find_confirmed_answer(question, confirmed_entries)
-    if entry:
-        reference = entry["ticket_id"]
-        sources.append({
-            "chunk_id": f"qa::{entry['qa_entry_id']}",
-            "source_type": "qa_entry",
-            "doc_id": entry["doc_id"] or f"qa-{reference}",
-            "doc_title": f"Разъяснение службы качества · {reference}",
-            "section": entry["section"] or reference,
-            "directorate": entry["directorate"],
-            "stage": entry["stage"],
-            "quote": entry["answer"],
-            "qa_entry_id": entry["qa_entry_id"],
-        })
     return sources
+
+
+def quality_source(question, confirmed_entries):
+    entry = find_confirmed_answer(question, confirmed_entries)
+    if not entry:
+        return None
+    reference = entry["ticket_id"]
+    return {
+        "chunk_id": f"qa::{entry['qa_entry_id']}",
+        "source_type": "qa_entry",
+        "doc_id": entry["doc_id"] or f"qa-{reference}",
+        "doc_title": f"Разъяснение службы качества · {reference}",
+        "section": entry["section"] or reference,
+        "directorate": entry["directorate"],
+        "stage": entry["stage"],
+        "quote": entry["answer"],
+        "qa_entry_id": entry["qa_entry_id"],
+    }
+
+
+def document_search_enabled():
+    return os.environ.get("AGENT_SOURCES") == "documents"
+
+
+def document_corpus_available():
+    from retrieval.mock import PROCESSED_DIR, RAW_DIR
+
+    return (PROCESSED_DIR / "chunks.jsonl").is_file() or any(RAW_DIR.glob("*.docx"))
+
+
+def search_documents(question, clarification):
+    from retrieval.mock import detect_directorates, search
+
+    if not document_corpus_available():
+        raise AgentError("Корпус регламентов не загружен. Добавьте DOCX в data/raw и перезапустите сервис.")
+    scope, _ = detect_directorates(clarification)
+    try:
+        return search(
+            f"{question}\n{clarification}" if clarification else question,
+            k=5,
+            directorate=scope[0] if len(scope) == 1 else None,
+            allowed_access=["all"],
+            include_qa=False,
+        )
+    except (OSError, BadZipFile, ParseError, KeyError, TypeError, ValueError) as exc:
+        raise AgentError("Не удалось прочитать корпус регламентов. Проверьте файлы поиска.") from exc
 
 
 def run_agent(question, history, confirmed_entries=()):
@@ -215,7 +249,27 @@ def run_agent(question, history, confirmed_entries=()):
     if len(history) >= 2 and history[-1]["status"] == "needs_clarification":
         clarification_context = history[-2:]
     original = clarification_context[0]["content"] if clarification_context else question
-    sources = demo_sources(original, confirmed_entries)
+    if document_search_enabled():
+        result = search_documents(original, question if clarification_context else "")
+        sources = [
+            {
+                "chunk_id": hit.chunk.chunk_id,
+                "source_type": hit.chunk.source_type,
+                "doc_id": hit.chunk.doc_id,
+                "doc_title": hit.chunk.doc_title,
+                "section": hit.chunk.section,
+                "directorate": hit.chunk.directorate,
+                "stage": hit.chunk.stage,
+                "quote": hit.chunk.text,
+                "qa_entry_id": hit.chunk.qa_entry_id,
+            }
+            for hit in result.hits
+        ]
+    else:
+        result = None
+        sources = demo_sources()
+    if entry_source := quality_source(original, confirmed_entries):
+        sources.append(entry_source)
     checks = numeric_checks(f"{original}\n{question}", sources)
     model = model_name()
     request = Request(
@@ -279,7 +333,8 @@ def run_agent(question, history, confirmed_entries=()):
         "ticket": None,
         "steps": [{
             "name": "generate",
-            "title": "Проверяю учебные источники с локальной моделью",
+            "title": "Проверяю найденные пункты с локальной моделью" if result is not None
+            else "Проверяю учебные источники с локальной моделью",
             "detail": {
                 "prompt_tokens": payload.get("prompt_eval_count"),
                 "completion_tokens": payload.get("eval_count"),
@@ -287,7 +342,11 @@ def run_agent(question, history, confirmed_entries=()):
             "started_at": started_at,
             "duration_ms": elapsed,
         }],
-        "metrics": {"n_hits": len(citations), "top_score": None, "n_retrieval_rounds": 0},
+        "metrics": {
+            "n_hits": len(result.hits) if result is not None else len(citations),
+            "top_score": result.top_score if result is not None else None,
+            "n_retrieval_rounds": int(result is not None),
+        },
         "model": model,
         "latency_ms": elapsed,
     }

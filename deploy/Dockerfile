@@ -11,12 +11,14 @@ FROM python:3.12-slim-bookworm
 COPY --from=ghcr.io/astral-sh/uv:0.13.10 /uv /usr/local/bin/uv
 WORKDIR /opt/punkt/backend
 ENV UV_PYTHON_DOWNLOADS=never \
+    PYTHONPATH=/opt/punkt \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
 COPY backend/pyproject.toml ./
 RUN uv sync --no-dev
 COPY backend/app ./app
+COPY retrieval /opt/punkt/retrieval
 COPY deploy/container_app.py ./container_app.py
 COPY --from=frontend-build /build/dist /opt/punkt/web
 

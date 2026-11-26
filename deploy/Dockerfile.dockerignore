@@ -3,6 +3,9 @@
 !backend/pyproject.toml
 !backend/app/
 !backend/app/**
+!retrieval/
+!retrieval/*.py
+!retrieval/synonyms.json
 !frontend/
 !frontend/package.json
 !frontend/package-lock.json

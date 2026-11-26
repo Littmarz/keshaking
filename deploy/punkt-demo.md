@@ -18,7 +18,17 @@ curl -fsS http://127.0.0.1:8080/api/health
 
 Поле `llm` должно быть `ok`. По умолчанию контейнер обращается к Ollama
 через `http://host.docker.internal:11434`. Адрес и модель можно задать
-через `LLM_BASE_URL` и `LLM_MODEL`. Прогоны ниже используют учебные источники.
+через `LLM_BASE_URL` и `LLM_MODEL`. Эта команда использует учебные источники.
+
+Для поиска по регламентам положите файлы `ib-project.docx`,
+`ib-presale.docx`, `dbrct-project.docx` и `tech-project.docx` в `data/raw/`.
+Если есть готовый `data/processed/chunks.jsonl`, поиск использует его.
+Папка данных подключается только для чтения. При замене файлов перезапустите
+контейнер, чтобы перечитать индекс.
+
+```bash
+AGENT_MODE=real AGENT_SOURCES=documents npm --prefix frontend run build:docker
+```
 
 Номер виден внизу интерфейса. `build:docker` и `npm run build` из
 `frontend/` используют общий локальный счётчик `.punkt-build-number`.
