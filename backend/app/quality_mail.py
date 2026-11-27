@@ -23,6 +23,8 @@ TICKET_REFERENCE = re.compile(r"<Q-([0-9]{4,18})\.([0-9a-f]{32})@punkt\.demo\.in
 MAILPIT_ID = re.compile(r"[a-zA-Z0-9_-]+")
 PAGE_SIZE = 50
 MAX_MAIL_BYTES = 128 * 1024
+MAIL_RESERVATION_SECONDS = 60
+MAIL_RETRY_SECONDS = 15
 
 
 def employee_address(user_id: str) -> str:
@@ -40,44 +42,64 @@ def send(message: EmailMessage) -> None:
         smtp.send_message(message)
 
 
-def deliver_next(database) -> None:
+def deliver_queued_mail(database, queue: str, select_next: str, build_message) -> None:
+    # Reserve one row so other workers skip it while SMTP runs outside SQLite's write lock.
     with database() as connection:
         connection.execute("BEGIN IMMEDIATE")
-        row = connection.execute(
-            """SELECT t.seq, t.question, t.session_id, t.user_id, t.context
-               FROM quality_mail AS m JOIN tickets AS t ON t.seq = m.ticket_seq
-               WHERE m.sent_at IS NULL AND m.retry_at <= unixepoch()
-               ORDER BY m.retry_at, t.seq LIMIT 1""",
-        ).fetchone()
+        row = connection.execute(select_next).fetchone()
         if row is None:
             return
+        reserved_until = connection.execute(
+            f"UPDATE {queue} SET retry_at = unixepoch() + ? WHERE ticket_seq = ? RETURNING retry_at",
+            (MAIL_RESERVATION_SECONDS, row["seq"]),
+        ).fetchone()["retry_at"]
 
-        ticket_id = f"Q-{row['seq']:04d}"
-        message = EmailMessage()
-        message["From"] = PUNKT_ADDRESS
-        message["To"] = QUALITY_ADDRESS
-        message["Cc"] = employee_address(row["user_id"])
-        message["Subject"] = f"Пункт: обращение {ticket_id}"
-        message["Message-ID"] = ticket_reference(row["seq"], row["session_id"])
-        context = json.loads(row["context"])
-        conflict = ""
-        if sources := context.get("conflict_sources"):
-            references = "\n".join(f"- {source['doc_title']} ({source['section']})" for source in sources)
-            conflict = f"{context['reason']}\n{references}\n\n"
-        message.set_content(
-            f"Обращение {ticket_id}\n\nВопрос сотрудника\n{row['question']}\n\n"
-            f"{conflict}"
-            "Ответьте на это письмо простым текстом. Сотрудник получит ответ в чате и на почту."
+    ticket_id = f"Q-{row['seq']:04d}"
+    message = build_message(row, ticket_id)
+    try:
+        send(message)
+    except OSError as exc:
+        logger.warning("Mail in %s for %s delayed: %s", queue, ticket_id, type(exc).__name__)
+        update, params = "retry_at = unixepoch() + ?", (MAIL_RETRY_SECONDS,)
+    else:
+        update, params = "sent_at = unixepoch()", ()
+
+    with database() as connection:
+        connection.execute(
+            f"UPDATE {queue} SET {update} WHERE ticket_seq = ? AND retry_at = ? AND sent_at IS NULL",
+            (*params, row["seq"], reserved_until),
         )
-        try:
-            send(message)
-        except OSError as exc:
-            logger.warning("Test mail for %s delayed: %s", ticket_id, type(exc).__name__)
-            connection.execute(
-                "UPDATE quality_mail SET retry_at = unixepoch() + 15 WHERE ticket_seq = ?", (row["seq"],),
-            )
-            return
-        connection.execute("UPDATE quality_mail SET sent_at = unixepoch() WHERE ticket_seq = ?", (row["seq"],))
+
+
+def ticket_message(row, ticket_id: str) -> EmailMessage:
+    message = EmailMessage()
+    message["From"] = PUNKT_ADDRESS
+    message["To"] = QUALITY_ADDRESS
+    message["Cc"] = employee_address(row["user_id"])
+    message["Subject"] = f"Пункт: обращение {ticket_id}"
+    message["Message-ID"] = ticket_reference(row["seq"], row["session_id"])
+    context = json.loads(row["context"])
+    conflict = ""
+    if sources := context.get("conflict_sources"):
+        references = "\n".join(f"- {source['doc_title']} ({source['section']})" for source in sources)
+        conflict = f"{context['reason']}\n{references}\n\n"
+    message.set_content(
+        f"Обращение {ticket_id}\n\nВопрос сотрудника\n{row['question']}\n\n"
+        f"{conflict}"
+        "Ответьте на это письмо простым текстом. Сотрудник получит ответ в чате и на почту."
+    )
+    return message
+
+
+def deliver_next(database) -> None:
+    deliver_queued_mail(
+        database, "quality_mail",
+        """SELECT t.seq, t.question, t.session_id, t.user_id, t.context
+           FROM quality_mail AS m JOIN tickets AS t ON t.seq = m.ticket_seq
+           WHERE m.sent_at IS NULL AND m.retry_at <= unixepoch()
+           ORDER BY m.retry_at, t.seq LIMIT 1""",
+        ticket_message,
+    )
 
 
 def queue_confirmed_reply(connection, ticket_seq: int) -> None:
@@ -86,40 +108,27 @@ def queue_confirmed_reply(connection, ticket_seq: int) -> None:
     )
 
 
-def deliver_next_reply(database) -> None:
-    with database() as connection:
-        connection.execute("BEGIN IMMEDIATE")
-        row = connection.execute(
-            """SELECT t.seq, t.session_id, t.user_id, q.answer
-               FROM quality_reply_mail AS m JOIN tickets AS t ON t.seq = m.ticket_seq
-               JOIN qa_entries AS q ON q.ticket_seq = m.ticket_seq
-               WHERE m.sent_at IS NULL AND m.retry_at <= unixepoch() AND q.status = 'confirmed'
-               ORDER BY m.retry_at, m.ticket_seq LIMIT 1""",
-        ).fetchone()
-        if row is None:
-            return
+def reply_message(row, ticket_id: str) -> EmailMessage:
+    message = EmailMessage()
+    message["From"] = PUNKT_ADDRESS
+    message["To"] = employee_address(row["user_id"])
+    message["Subject"] = f"Пункт: ответ службы качества по обращению {ticket_id}"
+    message["Message-ID"] = f"<{ticket_id}.{row['session_id']}.reply@punkt.demo.invalid>"
+    message["In-Reply-To"] = ticket_reference(row["seq"], row["session_id"])
+    message.set_content(row["answer"])
+    return message
 
-        ticket_id = f"Q-{row['seq']:04d}"
-        reference = ticket_reference(row["seq"], row["session_id"])
-        message = EmailMessage()
-        message["From"] = PUNKT_ADDRESS
-        message["To"] = employee_address(row["user_id"])
-        message["Subject"] = f"Пункт: ответ службы качества по обращению {ticket_id}"
-        message["Message-ID"] = f"<{ticket_id}.{row['session_id']}.reply@punkt.demo.invalid>"
-        message["In-Reply-To"] = reference
-        message.set_content(row["answer"])
-        try:
-            send(message)
-        except OSError as exc:
-            logger.warning("Quality reply for %s delayed: %s", ticket_id, type(exc).__name__)
-            connection.execute(
-                "UPDATE quality_reply_mail SET retry_at = unixepoch() + 15 WHERE ticket_seq = ?",
-                (row["seq"],),
-            )
-            return
-        connection.execute(
-            "UPDATE quality_reply_mail SET sent_at = unixepoch() WHERE ticket_seq = ?", (row["seq"],),
-        )
+
+def deliver_next_reply(database) -> None:
+    deliver_queued_mail(
+        database, "quality_reply_mail",
+        """SELECT t.seq, t.session_id, t.user_id, q.answer
+           FROM quality_reply_mail AS m JOIN tickets AS t ON t.seq = m.ticket_seq
+           JOIN qa_entries AS q ON q.ticket_seq = m.ticket_seq
+           WHERE m.sent_at IS NULL AND m.retry_at <= unixepoch() AND q.status = 'confirmed'
+           ORDER BY m.retry_at, m.ticket_seq LIMIT 1""",
+        reply_message,
+    )
 
 
 def send_demo_reply(ticket, answer: str) -> None:
