@@ -70,8 +70,20 @@ export async function request<T>(path: string, token?: string, payload?: unknown
   return (response.status === 204 ? undefined : await response.json()) as T;
 }
 
+const visitorKey = 'punkt.visitor-id';
+
+// Демо-аккаунт сотрудника общий: у каждого браузера своя история чатов и обращений.
+function visitorId(): string {
+  let id = localStorage.getItem(visitorKey);
+  if (!id || !/^[a-z0-9]{8,32}$/.test(id)) {
+    id = Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, '0')).join('');
+    localStorage.setItem(visitorKey, id);
+  }
+  return id;
+}
+
 export function login(userId: string, password?: string): Promise<AuthSession> {
-  return request<AuthSession>('/auth/login', undefined, { user_id: userId, password });
+  return request<AuthSession>('/auth/login', undefined, { user_id: userId, password, visitor_id: visitorId() });
 }
 
 export async function askQuestion(token: string, sessionId: string, question: string, onStep: (title: string) => void): Promise<Answer> {

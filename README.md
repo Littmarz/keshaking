@@ -25,6 +25,7 @@ AGENT_MODE=real AGENT_SOURCES=documents PUNKT_TEST_MAIL=1 COMPOSE_PROFILES=quali
 PowerShell: `$env:AGENT_MODE="real"; $env:AGENT_SOURCES="documents"; $env:PUNKT_TEST_MAIL="1"; $env:COMPOSE_PROFILES="quality-mail"; node frontend/scripts/build.mjs --docker`
 
 - Приложение: http://127.0.0.1:8080 · тестовая почта службы качества (Mailpit): http://127.0.0.1:8025
+- Пароли «Сотрудник», «Служба качества» и Mailpit (логин `punkt`) сборка создаёт в `deploy/punkt-secrets.env.local`
 - Проверка: `curl http://127.0.0.1:8080/api/health` → `{"db":"ok","search":"ok","llm":"ok"}`
 - Без модели (учебные примеры): `node frontend/scripts/build.mjs --docker`
 - Подробно и сценарий демо — [deploy/punkt-demo.md](deploy/punkt-demo.md)

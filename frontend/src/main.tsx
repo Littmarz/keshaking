@@ -6,7 +6,9 @@ import { QualityDesk } from './QualityDesk';
 import { SignIn } from './SignIn';
 import './styles.css';
 
-const examples = [
+type Example = { title: string; question: string };
+
+const fallbackExamples: Example[] = [
   { title: 'Ответ с источником', question: 'Кто проверяет тестовую заявку?' },
   { title: 'Уточнение по дирекции', question: 'Что будет, если по заявке не хватает информации?' },
   { title: 'Передача в службу качества', question: 'Сколько дней даётся на согласование ТКП с юристами?' },
@@ -62,7 +64,7 @@ function AnswerCard({ result, busy, clarificationActive, ask, openSource, openQu
       </div> : null}
       {ticketId && (openQueue ? (
         <button type="button" className="secondary" disabled={busy}
-          onClick={() => openQueue(ticketId)}>Открыть обращение {ticketId}</button>
+          onClick={() => openQueue(ticketId)}>Открыть обращение <span className="nowrap">{ticketId}</span></button>
       ) : (
         <p className="ticket-status">Обращение {ticketId} · {ticketPublished ? 'Ответ получен' : 'Ожидает ответа'}</p>
       ))}
@@ -98,6 +100,7 @@ function Workspace({ auth, onExpired }: { auth: AuthSession; onExpired: (token: 
   const [historyOpen, setHistoryOpen] = useState(() => !window.matchMedia('(max-width: 720px)').matches);
   const [source, setSource] = useState<Citation | null>(null);
   const [initialTicket, setInitialTicket] = useState<string | null>(null);
+  const [examples, setExamples] = useState<Example[]>(fallbackExamples);
   const thread = useRef<HTMLDivElement>(null);
   const publishedTickets = new Set(messages.flatMap((message) => message.role === 'quality' && message.ticket_id ? [message.ticket_id] : []));
   const hasPendingTicket = messages.some(({ result }) => result?.ticket && !publishedTickets.has(result.ticket.ticket_id));
@@ -135,6 +138,14 @@ function Workspace({ auth, onExpired }: { auth: AuthSession; onExpired: (token: 
   }, [loadAttempt, token, sessionKey, reportError]);
 
   useEffect(() => {
+    const controller = new AbortController();
+    request<Example[]>('/chat/examples', token, undefined, controller.signal)
+      .then((rows) => { if (rows.length) setExamples(rows); })
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [token]);
+
+  useEffect(() => {
     if (thread.current && screen === 'chat') thread.current.scrollTop = thread.current.scrollHeight;
   }, [messages, screen]);
 
@@ -142,6 +153,7 @@ function Workspace({ auth, onExpired }: { auth: AuthSession; onExpired: (token: 
     if (!session || busy || screen !== 'chat' || !hasPendingTicket) return;
     const controller = new AbortController();
     let timer: number;
+    const started = Date.now();
     async function poll() {
       try {
         if (document.visibilityState !== 'hidden') {
@@ -157,7 +169,8 @@ function Workspace({ auth, onExpired }: { auth: AuthSession; onExpired: (token: 
         if (controller.signal.aborted) return;
         if (cause instanceof ApiError && cause.status === 401) { onExpired(token); return; }
       }
-      timer = window.setTimeout(poll, 3000);
+      // Первую минуту проверяем часто, дальше раз в 15 с: эксперт отвечает не мгновенно.
+      timer = window.setTimeout(poll, Date.now() - started < 60_000 ? 3000 : 15_000);
     }
     void poll();
     return () => { controller.abort(); window.clearTimeout(timer); };

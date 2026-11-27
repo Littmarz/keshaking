@@ -19,6 +19,9 @@ services:
       PUNKT_EMPLOYEE_PASSWORD: ${PUNKT_EMPLOYEE_PASSWORD:?Set PUNKT_EMPLOYEE_PASSWORD}
       PUNKT_QUALITY_PASSWORD: ${PUNKT_QUALITY_PASSWORD:?Set PUNKT_QUALITY_PASSWORD}
       PUNKT_MAIL_PASSWORD: ${PUNKT_MAIL_PASSWORD:-}
+      # Порт опубликован только на 127.0.0.1, поэтому X-Forwarded-For от прокси стенда можно доверять:
+      # без этого лимиты частоты считали бы всех посетителей одним адресом прокси.
+      FORWARDED_ALLOW_IPS: "*"
     ports:
       - "127.0.0.1:${PUNKT_PORT:-8080}:8080"
     volumes:

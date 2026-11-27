@@ -248,11 +248,20 @@ def receive_replies(database, seen: set[str]) -> None:
 
 
 async def deliver_mail(database) -> None:
+    """Фоновая почта не должна умирать от одной ошибки: «database is locked» из SQLite раньше
+    завершала задачу навсегда, и сценарий 3 молча переставал работать до перезапуска."""
     seen: set[str] = set()
     mailbox_unavailable = False
+
+    async def attempt(step, *args, what: str) -> None:
+        try:
+            await asyncio.to_thread(step, *args)
+        except Exception:
+            logger.exception("%s не удалось, повторю", what)
+
     while True:
-        await asyncio.to_thread(deliver_next, database)
-        await asyncio.to_thread(deliver_next_copy, database)
+        await attempt(deliver_next, database, what="Отправка письма службе качества")
+        await attempt(deliver_next_copy, database, what="Уведомление сотрудника")
         try:
             await asyncio.to_thread(receive_replies, database, seen)
             mailbox_unavailable = False
@@ -260,5 +269,7 @@ async def deliver_mail(database) -> None:
             if not mailbox_unavailable:
                 logger.warning("Test mailbox unavailable: %s", type(exc).__name__)
             mailbox_unavailable = True
-        await asyncio.to_thread(deliver_next_reply, database)
+        except Exception:
+            logger.exception("Разбор ответов службы качества не удался, повторю")
+        await attempt(deliver_next_reply, database, what="Отправка ответа сотруднику")
         await asyncio.sleep(2)

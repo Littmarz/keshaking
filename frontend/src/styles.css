@@ -197,6 +197,7 @@ h1, h2, p { margin: 0; }
 .source-inner { position: relative; padding: 25px; }
 .source-inner h2 { margin: 6px 22px 0 0; font-size: 23px; }
 .source-inner blockquote { background: #edf6f0; border-left: 4px solid #62ab91; margin: 15px 0 0; padding: 14px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.nowrap { white-space: nowrap; }
 .source-close { position: absolute; top: 11px; right: 12px; background: #edf5f0; color: var(--ink); border: 0; border-radius: 8px; width: 32px; height: 32px; font-size: 23px; }
 
 @media (max-width: 1080px) {
@@ -213,10 +214,9 @@ h1, h2, p { margin: 0; }
   .history summary { min-height: 42px; padding-top: 11px; }
   .history ul { max-height: 10rem; }
   .nav-link, .new-chat { font-size: 13px; min-height: 42px; padding: 8px; gap: 5px; }
-  .hero { min-height: 179px; border-radius: 18px; }
-  .hero h1 { max-width: 87%; }
-  .hero p { max-width: 90%; }
-  .hero-shape { right: -53px; top: -17px; scale: .68; opacity: .43; }
+  .hero { min-height: 0; border-radius: 18px; padding-block: 18px; }
+  .hero h1 { max-width: 100%; font-size: 26px; }
+  .hero p, .hero-shape { display: none; }
   .chat-card { margin-top: 12px; }
   .example-grid, .quality-grid { grid-template-columns: 1fr; }
   .example { min-height: 0; }

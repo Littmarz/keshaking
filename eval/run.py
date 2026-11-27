@@ -199,20 +199,42 @@ class _Api:
         self.base, self.timeout = base.rstrip("/"), timeout
 
     def call(self, method: str, path: str, body: dict | None = None, token: str | None = None) -> dict:
+        import urllib.error
         import urllib.request
         data = json.dumps(body).encode("utf-8") if body is not None else None
-        req = urllib.request.Request(self.base + path, data=data, method=method,
-                                     headers={"Content-Type": "application/json",
-                                              **({"Authorization": f"Bearer {token}"} if token else {})})
-        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-            return json.loads(resp.read().decode("utf-8") or "null")
+        for attempt in range(6):
+            req = urllib.request.Request(self.base + path, data=data, method=method,
+                                         headers={"Content-Type": "application/json",
+                                                  **({"Authorization": f"Bearer {token}"} if token else {})})
+            try:
+                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                    return json.loads(resp.read().decode("utf-8") or "null")
+            except urllib.error.HTTPError as e:
+                if e.code != 429 or attempt == 5:  # стенд ограничивает частоту — ждём, сколько он просит
+                    raise
+                time.sleep(min(int(e.headers.get("Retry-After") or 5), 60))
+        raise RuntimeError("unreachable")
 
     def login(self, user_id: str) -> str:
-        variable = f"PUNKT_{user_id.upper()}_PASSWORD"
-        password = os.environ.get(variable)
+        password = _password(user_id)
         if not password:
-            sys.exit(f"Перед прогоном API задайте {variable}.")
+            sys.exit(f"Перед прогоном API задайте PUNKT_{user_id.upper()}_PASSWORD "
+                     "или соберите стенд через build.mjs (deploy/punkt-secrets.env.local).")
         return self.call("POST", "/auth/login", {"user_id": user_id, "password": password})["token"]
+
+
+def _password(user_id: str) -> str:
+    """Пароль демо-аккаунта: из окружения или из deploy/punkt-secrets.env.local (его создаёт build.mjs)."""
+    name = f"PUNKT_{user_id.upper()}_PASSWORD"
+    if os.environ.get(name):
+        return os.environ[name]
+    secrets = ROOT / "deploy" / "punkt-secrets.env.local"
+    if secrets.exists():
+        for line in secrets.read_text(encoding="utf-8").splitlines():
+            key, _, value = line.partition("=")
+            if key.strip() == name:
+                return value.strip()
+    return ""
 
 
 def run_api(cases: list[dict], k: int, base: str = "http://127.0.0.1:8000", timeout: float = 180) -> tuple[list[dict], dict]:

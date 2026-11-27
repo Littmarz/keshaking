@@ -1,9 +1,12 @@
 import asyncio
 import json
+import logging
 import os
 import secrets
 import sqlite3
-from collections.abc import Iterator
+import threading
+from collections import defaultdict, deque
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, closing, contextmanager, suppress
 from datetime import UTC, datetime
 from pathlib import Path
@@ -11,7 +14,7 @@ from time import monotonic
 from typing import Annotated
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -30,14 +33,112 @@ from app.mocks.knowledge import normalized_question
 from app.quality_mail import deliver_mail, mailpit_password, queue_confirmed_reply, receive_replies, send_demo_reply
 
 
+logger = logging.getLogger(__name__)
+
 USERS = {
     "employee": {"user_id": "employee", "name": "Сотрудник", "role": "employee"},
     "quality": {"user_id": "quality", "name": "Служба качества", "role": "quality"},
 }
 DEFAULT_DB = Path(__file__).resolve().parents[2] / "data" / "processed" / "mock.sqlite3"
 bearer = HTTPBearer(auto_error=False)
-tokens: dict[str, tuple[str, float]] = {}
+# token → (аккаунт, владелец истории, срок). У общего демо-аккаунта сотрудника у каждого браузера своя
+# история: владелец — «employee-<visitor_id>», иначе жюри видит вопросы друг друга.
+tokens: dict[str, tuple[str, str, float]] = {}
 TOKEN_TTL = 8 * 60 * 60
+VISITOR_ID = r"^[a-z0-9]{8,32}$"
+
+MAX_BODY_BYTES = 64 * 1024  # вопрос ≤ 8000 символов ≈ 16 КБ в UTF-8; всё сверх — мусор или атака
+EXAMPLES = {
+    "documents": [
+        # Формулировка проверена на Qwen 3 из 3; «Кто назначает руководителя проекта…» модель иногда
+        # возвращает с несуществующим номером источника, и агент отбрасывает ответ (см. run_agent).
+        {"title": "Ответ с источником", "question": "Кто назначает РП в дирекции ИБ?"},
+        {"title": "Уточнение по дирекции", "question": "Что будет, если по заявке не хватает информации?"},
+        {"title": "Передача в службу качества", "question": "Сколько дней даётся на согласование ТКП с юристами?"},
+    ],
+    "demo": [
+        {"title": "Ответ с источником", "question": "Кто проверяет тестовую заявку?"},
+        {"title": "Уточнение по дирекции", "question": "Что будет, если по заявке не хватает информации?"},
+        {"title": "Передача в службу качества", "question": "Сколько дней даётся на согласование ТКП с юристами?"},
+    ],
+}
+
+
+class RateLimiter:
+    """Скользящее окно в памяти процесса: ключ → времена последних запросов."""
+
+    def __init__(self):
+        self.hits: defaultdict[str, deque] = defaultdict(deque)
+        self.lock = threading.Lock()
+
+    def check(self, key: str, limit: int, window: float) -> None:
+        now = monotonic()
+        with self.lock:
+            hits = self.hits[key]
+            while hits and hits[0] <= now - window:
+                hits.popleft()
+            if len(hits) >= limit:
+                retry = int(hits[0] + window - now) + 1
+                raise HTTPException(429, f"Слишком много запросов. Повторите через {retry} с.",
+                                    headers={"Retry-After": str(retry)})
+            hits.append(now)
+            if len(self.hits) > 10_000:
+                for stale in [k for k, v in self.hits.items() if not v or v[-1] <= now - window]:
+                    del self.hits[stale]
+
+
+limiter = RateLimiter()
+
+
+def client_ip(request: Request) -> str:
+    # За обратным прокси uvicorn подставляет адрес из X-Forwarded-For (FORWARDED_ALLOW_IPS в compose).
+    return request.client.host if request.client else "unknown"
+
+
+def limit(name: str, count: int, window: float):
+    def dependency(request: Request):
+        limiter.check(f"{name}:{client_ip(request)}", count, window)
+    return dependency
+
+
+class LlmQueue:
+    """Очередь к модели: Ollama по умолчанию отвечает по одному, и без очереди в приложении ожидание
+    засчитывалось в таймаут агента — шестой одновременный вопрос получал 502 через 120 с."""
+
+    def __init__(self):
+        self.parallel = max(1, int(os.environ.get("PUNKT_LLM_PARALLEL", "1")))
+        self.wait = float(os.environ.get("PUNKT_QUEUE_WAIT_S", "300"))
+        self.slots = threading.BoundedSemaphore(self.parallel)
+        self.lock = threading.Lock()
+        self.pending = 0
+        self.sessions: set[str] = set()
+
+    @contextmanager
+    def turn(self, session_id: str, notify=None):
+        with self.lock:
+            if session_id in self.sessions:
+                raise HTTPException(409, "В этом чате уже готовится ответ. Дождитесь его.")
+            self.sessions.add(session_id)
+            ahead = max(0, self.pending - self.parallel + 1)
+            self.pending += 1
+        try:
+            if ahead and notify:
+                notify({"title": f"Жду очереди к модели, вопросов впереди: {ahead}"})
+            if not self.slots.acquire(timeout=self.wait):
+                raise HTTPException(503, "Сейчас много вопросов. Повторите через минуту.")
+            try:
+                if ahead and notify:
+                    notify({"title": "Модель готовит ответ…"})
+                yield
+            finally:
+                self.slots.release()
+        finally:
+            with self.lock:
+                self.pending -= 1
+                self.sessions.discard(session_id)
+
+
+llm_queue = LlmQueue()
 
 
 def account_password(user_id: str) -> str:
@@ -149,7 +250,78 @@ def test_mail_enabled():
     return os.environ.get("PUNKT_TEST_MAIL") == "1"
 
 
-app = FastAPI(title="Пункт · локальный API", lifespan=lifespan)
+class BodyLimit:
+    """413 для тел больше MAX_BODY_BYTES — до разбора JSON (иначе 400 МБ без входа съедали память контейнера)."""
+
+    def __init__(self, app, max_bytes: int = MAX_BODY_BYTES):
+        self.app, self.max_bytes = app, max_bytes
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        declared = dict(scope.get("headers") or []).get(b"content-length")
+        if declared and declared.isdigit() and int(declared) > self.max_bytes:
+            return await self.reject(scope, receive, send)
+        body, more = b"", True
+        while more:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                return
+            body += message.get("body", b"")
+            more = message.get("more_body", False)
+            if len(body) > self.max_bytes:
+                return await self.reject(scope, receive, send)
+        replayed = False
+
+        async def replay():
+            nonlocal replayed
+            if not replayed:
+                replayed = True
+                return {"type": "http.request", "body": body, "more_body": False}
+            return await receive()
+
+        await self.app(scope, replay, send)
+
+    @staticmethod
+    async def reject(scope, receive, send):
+        await JSONResponse({"detail": "Запрос слишком большой."}, status_code=413)(scope, receive, send)
+
+
+SECURITY_HEADERS = [
+    (b"content-security-policy", b"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
+                                 b"connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"),
+    (b"x-frame-options", b"DENY"),
+    (b"x-content-type-options", b"nosniff"),
+    (b"referrer-policy", b"same-origin"),
+]
+
+
+class SecurityHeaders:
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+
+        async def with_headers(message):
+            if message["type"] == "http.response.start":
+                present = {name for name, _ in message.get("headers", [])}
+                message.setdefault("headers", [])
+                message["headers"] = [*message["headers"], *(h for h in SECURITY_HEADERS if h[0] not in present)]
+            await send(message)
+
+        await self.app(scope, receive, with_headers)
+
+
+api_docs = os.environ.get("PUNKT_API_DOCS") == "1"  # схема API наружу только по явному флагу
+app = FastAPI(
+    title="Пункт · локальный API", lifespan=lifespan,
+    docs_url="/docs" if api_docs else None, redoc_url="/redoc" if api_docs else None,
+    openapi_url="/openapi.json" if api_docs else None,
+)
+app.add_middleware(SecurityHeaders)
+app.add_middleware(BodyLimit)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -159,8 +331,9 @@ app.add_middleware(
 
 
 class LoginRequest(BaseModel):
-    user_id: str
+    user_id: Annotated[str, StringConstraints(max_length=64)]
     password: Annotated[str, StringConstraints(max_length=1024)] = ""
+    visitor_id: Annotated[str, StringConstraints(pattern=VISITOR_ID)] | None = None
 
 
 class ChatRequest(BaseModel):
@@ -183,8 +356,9 @@ def current_user(credentials: Credentials):
     if credentials:
         token = credentials.credentials
         session = tokens.get(token)
-        if session and session[1] > monotonic():
-            return USERS[session[0]]
+        if session and session[2] > monotonic():
+            account, owner, _ = session
+            return {**USERS[account], "user_id": owner}
         tokens.pop(token, None)
     raise HTTPException(401, "Войдите в аккаунт.", headers={"WWW-Authenticate": "Bearer"})
 
@@ -236,7 +410,7 @@ def users():
     return [{**user, "password_required": True} for user in USERS.values()]
 
 
-@app.post("/auth/login")
+@app.post("/auth/login", dependencies=[Depends(limit("login", 10, 60))])
 def login(payload: LoginRequest):
     user = USERS.get(payload.user_id)
     if user is None:
@@ -245,12 +419,15 @@ def login(payload: LoginRequest):
     if not password.strip() or not secrets.compare_digest(password.encode(), payload.password.encode()):
         raise HTTPException(401, "Неверный пароль.")
     now = monotonic()
-    for key, (_, expiry) in tokens.copy().items():
+    for key, (_, _, expiry) in tokens.copy().items():
         if expiry <= now:
             tokens.pop(key, None)
+    owner = payload.user_id
+    if user["role"] == "employee" and payload.visitor_id:
+        owner = f"{payload.user_id}-{payload.visitor_id}"
     token = secrets.token_urlsafe(32)
-    tokens[token] = (payload.user_id, now + TOKEN_TTL)
-    return {"token": token, "user": user}
+    tokens[token] = (payload.user_id, owner, now + TOKEN_TTL)
+    return {"token": token, "user": {**user, "user_id": owner}}
 
 
 @app.get("/auth/me")
@@ -265,7 +442,13 @@ def logout(credentials: Credentials):
     return {"ok": True}
 
 
-@app.post("/chat/sessions")
+@app.get("/chat/examples")
+def examples(_user: User):
+    """Примеры на пустом экране зависят от источников: учебные вопросы на настоящих регламентах не работают."""
+    return EXAMPLES["documents" if document_search_enabled() else "demo"]
+
+
+@app.post("/chat/sessions", dependencies=[Depends(limit("sessions", 30, 60))])
 def create_session(user: User):
     session_id = uuid4().hex
     with database() as connection:
@@ -365,10 +548,16 @@ def create_ticket(connection, user_id, session_id, question, reason, *, conflict
     return {"ticket_id": ticket_id, "created": created, "message": message}
 
 
-def ask_and_save(payload, user):
+def ask_and_save(payload, user, notify=None):
     session_id, question = payload.session_id, payload.question
     with database() as connection:
         require_session(connection, session_id, user["user_id"])
+    with llm_queue.turn(session_id, notify):
+        return answer_and_save(session_id, question, user)
+
+
+def answer_and_save(session_id, question, user):
+    with database() as connection:
         rows = connection.execute(
             "SELECT seq, role, content, status FROM messages WHERE session_id = ? ORDER BY seq DESC LIMIT 12",
             (session_id,),
@@ -419,19 +608,59 @@ def ask_and_save(payload, user):
     return result
 
 
-@app.post("/chat/ask")
+ASK_LIMIT = Depends(limit("ask", 10, 60))
+KEEPALIVE_S = 10
+
+
+def sse(event: str, data) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+@app.post("/chat/ask", dependencies=[ASK_LIMIT])
 def ask(payload: ChatRequest, user: User):
     return ask_and_save(payload, user)
 
 
-@app.post("/chat/ask/stream")
-def ask_stream(payload: ChatRequest, user: User):
-    result = ask_and_save(payload, user)
+@app.post("/chat/ask/stream", dependencies=[ASK_LIMIT])
+async def ask_stream(payload: ChatRequest, user: User):
+    """Поток открывается сразу: шаг «ищу», место в очереди и комментарии keep-alive раз в 10 с.
+    Раньше сервер молчал до готового ответа (20–120 с), и прокси с таймаутом 60 с обрывал соединение."""
+    with database() as connection:
+        require_session(connection, payload.session_id, user["user_id"])
+    loop = asyncio.get_running_loop()
+    updates: asyncio.Queue = asyncio.Queue()
 
-    def events() -> Iterator[str]:
+    def notify(step):
+        loop.call_soon_threadsafe(updates.put_nowait, step)
+
+    work = asyncio.ensure_future(asyncio.to_thread(ask_and_save, payload, user, notify))
+
+    async def events() -> AsyncIterator[str]:
+        yield sse("step", {"title": "Ищу пункты в регламентах…"})
+        waiting = None
+        while True:
+            waiting = waiting or asyncio.ensure_future(updates.get())
+            done, _ = await asyncio.wait({work, waiting}, timeout=KEEPALIVE_S, return_when=asyncio.FIRST_COMPLETED)
+            if waiting in done:
+                yield sse("step", waiting.result())
+                waiting = None
+            elif work in done:
+                waiting.cancel()
+                break
+            else:
+                yield ": keep-alive\n\n"
+        try:
+            result = work.result()
+        except HTTPException as exc:
+            yield sse("error", {"status": exc.status_code, "message": exc.detail})
+            return
+        except Exception:
+            logger.exception("Ответ на вопрос не сохранён")
+            yield sse("error", {"status": 500, "message": "Не удалось получить ответ. Повторите запрос."})
+            return
         for step in result["steps"]:
-            yield f"event: step\ndata: {json.dumps(step, ensure_ascii=False)}\n\n"
-        yield f"event: result\ndata: {json.dumps(result, ensure_ascii=False)}\n\n"
+            yield sse("step", step)
+        yield sse("result", result)
 
     return StreamingResponse(
         events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
