@@ -15,8 +15,8 @@ ENV UV_PYTHON_DOWNLOADS=never \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-COPY backend/pyproject.toml ./
-RUN uv sync --no-dev
+COPY backend/pyproject.toml backend/uv.lock ./
+RUN uv sync --no-dev --locked
 COPY backend/app ./app
 COPY retrieval /opt/punkt/retrieval
 COPY deploy/container_app.py ./container_app.py
@@ -29,4 +29,4 @@ RUN groupadd --gid 10001 punkt \
 
 USER punkt
 EXPOSE 8080
-CMD [".venv/bin/uvicorn", "container_app:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD [".venv/bin/uvicorn", "container_app:app", "--host", "0.0.0.0", "--port", "8080", "--no-server-header"]
