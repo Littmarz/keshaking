@@ -52,6 +52,10 @@ class QualityMailTests(unittest.TestCase):
                                 "INSERT INTO sessions (session_id, user_id, created_at) VALUES (?, ?, datetime('now'))",
                                 ("chat-created-during-smtp", employee["user_id"]),
                             )
+                            connection.execute(
+                                "INSERT INTO messages (session_id, message_id, role, content) VALUES (?, ?, 'user', ?)",
+                                ("chat-created-during-smtp", f"smtp-{kind}", "Вопрос во время отправки письма"),
+                            )
                         self.assertIn("chat-created-during-smtp", {item["session_id"] for item in main.sessions(employee)})
                         second = pool.submit(deliver, main.database)
                         second.result(timeout=5)

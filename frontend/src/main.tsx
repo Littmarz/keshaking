@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ApiError, askQuestion, request, type Account, type Answer, type AuthSession, type Citation, type Message, type Session } from './api';
+import { MyRequests } from './MyRequests';
 import { QualityDesk } from './QualityDesk';
 import { SignIn } from './SignIn';
 import './styles.css';
@@ -84,7 +85,7 @@ function Workspace({ auth, onExpired }: { auth: AuthSession; onExpired: (token: 
   const { token, user } = auth;
   const sessionKey = `punkt.selected-chat.${user.user_id}`;
   const isQuality = user.role === 'quality';
-  const [screen, setScreen] = useState<'chat' | 'quality'>('chat');
+  const [screen, setScreen] = useState<'chat' | 'quality' | 'requests'>('chat');
   const [session, setSession] = useState('');
   const [sessions, setSessions] = useState<Session[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -189,20 +190,15 @@ function Workspace({ auth, onExpired }: { auth: AuthSession; onExpired: (token: 
     }
   }
 
-  async function newChat() {
+  // Чат на сервере создаётся первым вопросом (см. send), поэтому пустые чаты не попадают в историю.
+  function newChat() {
     if (busy) return;
-    setBusy(true);
     setError('');
-    try {
-      const created = await newSession(token);
-      setSessions((items) => [{ ...created, created_at: new Date().toISOString() }, ...items]);
-      showChat(created.session_id, []);
-    } catch (cause) {
-      reportError(cause, 'Чат не создался.');
-      setScreen('chat');
-    } finally {
-      setBusy(false);
-    }
+    setSession('');
+    sessionStorage.removeItem(sessionKey);
+    setMessages([]);
+    setQuestion('');
+    setScreen('chat');
   }
 
   async function send(value: string) {
@@ -221,7 +217,7 @@ function Workspace({ auth, onExpired }: { auth: AuthSession; onExpired: (token: 
         id = created.session_id;
         setSession(id);
         sessionStorage.setItem(sessionKey, id);
-        setSessions((items) => [{ ...created, created_at: new Date().toISOString() }, ...items]);
+        setSessions((items) => [{ ...created, created_at: new Date().toISOString(), title: text }, ...items]);
       }
       const result = await askQuestion(token, id, text, setStep);
       setMessages((items) => [...items, { message_id: result.message_id, role: 'assistant', content: result.answer, result }]);
@@ -250,7 +246,7 @@ function Workspace({ auth, onExpired }: { auth: AuthSession; onExpired: (token: 
 
   function showQueue(ticket: string | null = null) {
     setInitialTicket(ticket);
-    setScreen('quality');
+    setScreen(isQuality ? 'quality' : 'requests');
   }
 
   return (
@@ -262,8 +258,10 @@ function Workspace({ auth, onExpired }: { auth: AuthSession; onExpired: (token: 
               onClick={() => setScreen('chat')}><span className="nav-icon chat-icon" aria-hidden="true" />Задать вопрос</button>
             {isQuality && <button type="button" className="nav-link" aria-current={screen === 'quality' ? 'page' : undefined}
               onClick={() => showQueue()}><span className="nav-icon queue-icon" aria-hidden="true" />Служба качества</button>}
+            {!isQuality && <button type="button" className="nav-link" aria-current={screen === 'requests' ? 'page' : undefined}
+              onClick={() => showQueue()}><span className="nav-icon queue-icon" aria-hidden="true" />Мои обращения</button>}
           </nav>
-          <button className="new-chat" type="button" disabled={busy} onClick={() => void newChat()}><span aria-hidden="true">+</span> Новый чат</button>
+          <button className="new-chat" type="button" disabled={busy} onClick={newChat}><span aria-hidden="true">+</span> Новый чат</button>
           <details className="history" open={historyOpen} onToggle={(event) => setHistoryOpen(event.currentTarget.open)}>
             <summary>История чатов</summary>
             {sessions.length > 0 ? <ul>
@@ -279,7 +277,9 @@ function Workspace({ auth, onExpired }: { auth: AuthSession; onExpired: (token: 
           </details>
         </aside>
         <main className="main">
-          {isQuality && screen === 'quality' ? <QualityDesk token={token} onExpired={onExpired} initialTicket={initialTicket} /> : (
+          {isQuality && screen === 'quality' ? <QualityDesk token={token} onExpired={onExpired} initialTicket={initialTicket} />
+            : !isQuality && screen === 'requests' ? <MyRequests token={token} onExpired={onExpired} initialTicket={initialTicket}
+              openChat={(id) => void selectChat(id)} /> : (
             <section className="chat" aria-labelledby="chat-heading">
               <div className="hero">
                 <h1 id="chat-heading">Ответы по регламентам</h1>
@@ -314,7 +314,7 @@ function Workspace({ auth, onExpired }: { auth: AuthSession; onExpired: (token: 
                     return message.result ? (
                       <AnswerCard key={message.message_id} result={message.result} busy={busy}
                         clarificationActive={message.message_id === lastMessage}
-                        ask={(value) => void send(value)} openSource={setSource} openQueue={isQuality ? showQueue : undefined}
+                        ask={(value) => void send(value)} openSource={setSource} openQueue={showQueue}
                         ticketPublished={publishedTickets.has(message.result.ticket?.ticket_id ?? '')} />
                     ) : <p key={message.message_id}>{message.content}</p>;
                   })}

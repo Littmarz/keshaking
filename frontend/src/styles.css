@@ -178,6 +178,17 @@ h1, h2, p { margin: 0; }
 .review-form textarea { resize: vertical; line-height: 1.45; }
 .review-fields { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; }
 .draft-note { color: var(--muted); font-size: 14px; line-height: 1.4; }
+.requests { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.request { border: 1px solid var(--line, #dfe7e2); border-radius: 12px; padding: 14px; display: grid; gap: 9px; justify-items: start; }
+.request[aria-current="true"] { border-color: #a9ccbd; background: #f3faf6; }
+.request .ticket-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+.request .ticket-meta strong { color: inherit; }
+.request-status { padding: 2px 8px; border-radius: 999px; background: #fff3d6; color: #7a5a00; }
+.request-done .request-status { background: #e8f5ec; color: #2f6b45; }
+.request-question { margin: 0; line-height: 1.45; overflow-wrap: anywhere; }
+.request .published { justify-self: stretch; }
+.request .secondary { min-height: 34px; padding: 5px 10px; font-size: 13px; }
+.requests-waiting { margin-left: 8px; font-size: 13px; font-weight: 500; color: var(--muted); }
 .published { background: #e8f5ec; border: 1px solid #cee7d6; padding: 14px; border-radius: 11px; }
 .published p { margin: 7px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .published small { color: var(--muted); }

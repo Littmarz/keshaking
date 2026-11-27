@@ -30,6 +30,12 @@ export type Message = {
 };
 export type Session = { session_id: string; created_at: string; title?: string | null };
 export type Ticket = { ticket_id: string; question: string; status: 'open' | 'answered' | 'published'; created_at: string };
+export type MyTicket = Ticket & {
+  session_id: string;
+  answer: string | null;
+  doc_id: string | null;
+  section: string | null;
+};
 export type Entry = {
   qa_entry_id: string;
   answer: string;

@@ -51,13 +51,34 @@ class DemoAccountTests(unittest.TestCase):
             )
         [history] = main.sessions(employee)
         self.assertEqual((history["session_id"], history["title"]), (session, "Первый вопрос"))
-        self.assertIsNone(main.sessions(quality)[0]["title"])
+        self.assertEqual(main.sessions(quality), [], "пустой чат без вопросов не попадает в историю")
         with self.assertRaises(HTTPException) as hidden:
             main.session_messages(session, quality)
         self.assertEqual(hidden.exception.status_code, 404)
         with self.assertRaises(HTTPException) as denied:
             main.require_quality(employee)
         self.assertEqual(denied.exception.status_code, 403)
+
+    def test_employee_sees_own_tickets_and_only_published_answers(self):
+        async def initialize():
+            async with main.lifespan(main.app):
+                pass
+
+        asyncio.run(initialize())
+        employee, quality = main.USERS["employee"], main.USERS["quality"]
+        session = main.create_session(employee)["session_id"]
+        with main.database() as db:
+            main.create_ticket(db, employee["user_id"], session, "Сколько дней на согласование ТКП?", "нет в регламентах")
+        [waiting] = main.my_tickets(employee)
+        self.assertEqual((waiting["ticket_id"], waiting["status"], waiting["session_id"]), ("Q-0001", "open", session))
+        main.save_ticket_answer("Q-0001", main.TicketAnswer(answer="Черновик эксперта"))
+        [draft] = main.my_tickets(employee)
+        self.assertEqual(draft["status"], "answered")
+        self.assertIsNone(draft["answer"], "черновик эксперта сотруднику не показываем")
+        with main.database() as db:
+            db.execute("UPDATE tickets SET status = 'published' WHERE seq = 1")
+        self.assertEqual(main.my_tickets(employee)[0]["answer"], "Черновик эксперта")
+        self.assertEqual(main.my_tickets(quality), [])
 
     def test_partial_or_shared_password_configuration_fails(self):
         for invalid_password in ("", os.environ["PUNKT_EMPLOYEE_PASSWORD"]):

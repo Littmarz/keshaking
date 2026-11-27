@@ -247,7 +247,9 @@ def sessions(user: User):
             """SELECT s.session_id, s.created_at, (
                    SELECT substr(m.content, 1, 100) FROM messages m
                    WHERE m.session_id = s.session_id AND m.role = 'user' ORDER BY m.seq LIMIT 1
-               ) AS title FROM sessions s WHERE s.user_id = ? ORDER BY s.created_at DESC""",
+               ) AS title FROM sessions s
+               WHERE s.user_id = ? AND EXISTS (SELECT 1 FROM messages m WHERE m.session_id = s.session_id)
+               ORDER BY s.created_at DESC""",
             (user["user_id"],),
         ).fetchall()
     return [dict(row) for row in rows]
@@ -404,6 +406,27 @@ def tickets(status: str = "open"):
             (status,),
         ).fetchall()
     return [serialize_ticket(row) for row in rows]
+
+
+@app.get("/my/tickets")
+def my_tickets(user: User):
+    """Обращения сотрудника в службу качества: статус и опубликованный ответ (черновик эксперта не показываем)."""
+    with database() as connection:
+        rows = connection.execute(
+            """SELECT t.seq, t.session_id, t.created_at, t.question, t.status,
+                      CASE WHEN t.status = 'published' THEN qa.answer END AS answer,
+                      CASE WHEN t.status = 'published' THEN qa.doc_id END AS doc_id,
+                      CASE WHEN t.status = 'published' THEN qa.section END AS section
+               FROM tickets t LEFT JOIN qa_entries qa ON qa.ticket_seq = t.seq
+               WHERE t.user_id = ? ORDER BY t.seq DESC""",
+            (user["user_id"],),
+        ).fetchall()
+    result = []
+    for row in rows:
+        ticket = dict(row)
+        ticket["ticket_id"] = f"Q-{ticket.pop('seq'):04d}"
+        result.append(ticket)
+    return result
 
 
 def serialize_ticket(row):
