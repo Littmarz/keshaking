@@ -13,12 +13,15 @@ npm --prefix frontend run build:docker
 
 ```bash
 AGENT_MODE=real npm --prefix frontend run build:docker
-curl -fsS http://127.0.0.1:8080/api/health
+curl -fsS http://127.0.0.1:8080/api/ready
 ```
 
 Поле `llm` должно быть `ok`. По умолчанию контейнер обращается к Ollama
 через `http://host.docker.internal:11434`. Адрес и модель можно задать
 через `LLM_BASE_URL` и `LLM_MODEL`. Эта команда использует учебные источники.
+Docker проверяет `/api/ready`. В режиме с моделью проверка требует доступной
+Ollama и настроенной модели. В режиме с регламентами требуется также читаемый
+индекс с доступными пунктами. Для диагностики используйте `/api/health`.
 
 Для поиска по регламентам положите файлы `ib-project.docx`,
 `ib-presale.docx`, `dbrct-project.docx` и `tech-project.docx` в `data/raw/`.

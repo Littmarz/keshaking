@@ -409,7 +409,7 @@ AMBIG_RATIO = float(os.environ.get("AMBIG_RATIO", "0.5"))
 # сам задаёт область: уточнять не нужно. Нужен устойчивый термин (≥ UNIQUE_MIN_DF пунктов),
 # а не случайное слово, которое один раз встретилось в одном документе («подать»).
 UNIQUE_MIN_DF = int(os.environ.get("UNIQUE_MIN_DF", "2"))
-# Подтверждённые записи службы качества важнее пункта регламента (D-009, ответ организаторов 27.11).
+# Коэффициент выдачи для разъяснений; применимость правила определяет агент (D-009).
 QA_BOOST = float(os.environ.get("QA_BOOST", "1.3"))
 QA_MIN_COVERAGE = float(os.environ.get("QA_MIN_COVERAGE", "0.45"))
 
@@ -596,6 +596,14 @@ def get_section(doc_id: str, section: str) -> Chunk | None:
 
 def list_documents(allowed_access: list[str] | None = None) -> list[Document]:
     return [d for d in _index().docs.values() if allowed_access is None or d.access_level in allowed_access]
+
+
+def regulations_available() -> bool:
+    return any(
+        c.source_type == "regulation" and c.status in DEFAULT_STATUSES
+        and c.access_level == "all" and c.text.strip()
+        for c in _index().chunks
+    )
 
 
 def upsert_qa_entry(entry: dict) -> None:

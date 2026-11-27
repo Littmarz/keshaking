@@ -63,6 +63,31 @@ class NumericCheckTests(unittest.TestCase):
 
 
 class QualityRoutingTests(unittest.TestCase):
+    def test_quality_match_is_compared_with_regulation_and_conflict_uses_the_rule(self):
+        question = "Кто проверяет заявку в Техдирекции?"
+        chunk = Chunk("tech::1.2", "tech", "Техническая дирекция", "1.2",
+                      "Заявку проверяет координатор.", directorate="Техдирекция")
+        entry = {
+            "qa_entry_id": "qa-demo", "ticket_id": "Q-0001", "question": question,
+            "answer": "Заявку проверяет автор.", "doc_id": "tech", "section": "1.2",
+            "directorate": "Техдирекция", "stage": None, "status": "confirmed",
+        }
+        decision = {"scope": "company_process", "status": "conflict",
+                    "text": "Применяйте ответ эксперта: заявку проверяет автор.", "source_ids": [2, 1]}
+        response = {"message": {"content": json.dumps(decision)}}
+        with patch.dict(os.environ, {"AGENT_SOURCES": "documents"}), patch(
+            "app.agent.search_documents", return_value=(SearchResult(hits=[Hit(chunk, 1.0)]), [chunk])
+        ), patch("app.agent.urlopen", return_value=io.BytesIO(json.dumps(response).encode())) as ollama:
+            result = run_agent(question, [], [entry])
+
+        context = json.loads(json.loads(ollama.call_args.args[0].data)["messages"][-1]["content"])
+        self.assertEqual([source["source_type"] for source in context["sources"]], ["regulation", "qa_entry"])
+        self.assertEqual(context["matching_quality_source_ids"], [2])
+        self.assertEqual(result["status"], "conflict")
+        self.assertEqual([source["source_type"] for source in result["citations"]], ["regulation", "qa_entry"])
+        self.assertIn(chunk.text, result["answer"])
+        self.assertNotIn(entry["answer"], result["answer"])
+
     def test_missing_company_rule_is_sent_to_quality(self):
         question = "Сколько дней даётся на согласование ТКП с юристами?"
         history = [

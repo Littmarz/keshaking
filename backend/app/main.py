@@ -12,15 +12,15 @@ from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, StringConstraints
 
 from app.agent import (
     AgentError,
     conversation_question,
-    document_corpus_available,
     document_search_enabled,
+    document_search_ready,
     model_ready,
     run_agent,
 )
@@ -148,11 +148,26 @@ def require_session(connection, session_id, user_id):
 @app.get("/health")
 def health():
     with database() as connection:
-        connection.execute("SELECT 1")
+        connection.execute("SELECT 1 FROM sessions LIMIT 1").fetchone()
     real_mode = os.environ.get("AGENT_MODE") == "real"
     llm_ready = real_mode and model_ready()
-    search_ready = real_mode and document_search_enabled() and document_corpus_available()
+    search_ready = real_mode and document_search_enabled() and document_search_ready()
     return {"db": "ok", "search": "ok" if search_ready else "down", "llm": "ok" if llm_ready else "down"}
+
+
+@app.get("/ready")
+def readiness():
+    try:
+        checks = health()
+    except (sqlite3.Error, OSError):
+        return JSONResponse({"db": "down"}, status_code=503)
+    required = ["db"]
+    if os.environ.get("AGENT_MODE") == "real":
+        required.append("llm")
+        if document_search_enabled():
+            required.append("search")
+    ready = all(checks[dependency] == "ok" for dependency in required)
+    return JSONResponse(checks, status_code=200 if ready else 503)
 
 
 @app.get("/auth/users")
@@ -211,13 +226,18 @@ def session_messages(session_id: str, user: User):
     return {"session_id": session_id, "messages": messages}
 
 
-def create_ticket(connection, user_id, session_id, question, reason):
+def create_ticket(connection, user_id, session_id, question, reason, *, conflict_sources=()):
     normalized = normalized_question(question)
     dedup_key = f"{session_id}:{normalized}"
+    context = {"reason": reason}
+    if conflict_sources:
+        source_ids = sorted(source["chunk_id"] for source in conflict_sources)
+        dedup_key = json.dumps([session_id, normalized, source_ids])
+        context["conflict_sources"] = conflict_sources
     cursor = connection.execute(
         """INSERT INTO tickets (session_id, user_id, created_at, question, context, dedup_key)
            VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (dedup_key) DO NOTHING""",
-        (session_id, user_id, datetime.now(UTC).isoformat(), question, json.dumps({"reason": reason}), dedup_key),
+        (session_id, user_id, datetime.now(UTC).isoformat(), question, json.dumps(context), dedup_key),
     )
     seq = connection.execute("SELECT seq FROM tickets WHERE dedup_key = ?", (dedup_key,)).fetchone()["seq"]
     ticket_id = f"Q-{seq:04d}"
@@ -262,13 +282,22 @@ def ask_and_save(payload, user):
         ).fetchone()[0]
         if current_seq != last_seq:
             raise HTTPException(409, "В этом чате уже появился другой ответ. Повторите запрос.")
-        if result["status"] == "escalated":
+        conflict_sources = []
+        if result["status"] == "conflict":
+            source_types = {source["source_type"] for source in result["citations"]}
+            if {"regulation", "qa_entry"} <= source_types:
+                conflict_sources = [
+                    {key: source[key] for key in ("chunk_id", "doc_title", "section", "source_type")}
+                    for source in result["citations"]
+                ]
+        if result["status"] == "escalated" or conflict_sources:
             ticket_question = question
             if real_mode:
                 original, clarifications = conversation_question(question, history)
                 ticket_question = "\n".join([original, *(f"Уточнение: {item['reply']}" for item in clarifications)])
             result["ticket"] = create_ticket(
                 connection, user["user_id"], session_id, ticket_question, result["reason"],
+                conflict_sources=conflict_sources,
             )
             result["answer"] += " " + result["ticket"]["message"]
         result["message_id"] = uuid4().hex
