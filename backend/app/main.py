@@ -16,7 +16,14 @@ from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, StringConstraints
 
-from app.agent import AgentError, document_corpus_available, document_search_enabled, model_ready, run_agent
+from app.agent import (
+    AgentError,
+    conversation_question,
+    document_corpus_available,
+    document_search_enabled,
+    model_ready,
+    run_agent,
+)
 from app.mocks.fake_agent import run_mock
 from app.mocks.knowledge import normalized_question
 from app.quality_mail import deliver_mail, employee_address, receive_replies, send_demo_reply
@@ -257,8 +264,9 @@ def ask_and_save(payload, user):
             raise HTTPException(409, "В этом чате уже появился другой ответ. Повторите запрос.")
         if result["status"] == "escalated":
             ticket_question = question
-            if real_mode and len(history) >= 2 and history[-1]["status"] == "needs_clarification":
-                ticket_question = f"{history[-2]['content']}\nУточнение: {question}"
+            if real_mode:
+                original, clarifications = conversation_question(question, history)
+                ticket_question = "\n".join([original, *(f"Уточнение: {item['reply']}" for item in clarifications)])
             result["ticket"] = create_ticket(
                 connection, user["user_id"], session_id, ticket_question, result["reason"],
             )

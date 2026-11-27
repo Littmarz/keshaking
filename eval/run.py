@@ -124,9 +124,15 @@ def _judge(c: dict, statuses: list[str], last: dict, ms: float) -> dict:
     cites = last.get("citations") or []
     cited = [(x.get("doc_id"), x.get("section"), x.get("source_type", "regulation")) for x in cites]
     answer = last.get("answer") or ""
-    missing = [m for m in c.get("must_contain", []) if m.lower() not in answer.lower()]
-    src_ok = (all(any(_match(e, *g) for g in cited) for e in c.get("expected_sources", []))
-              if last.get("status") == "answered" else True)
+    normalized = answer.casefold()
+    missing = [m for m in c.get("must_contain", []) if m.casefold() not in normalized]
+    missing.extend(
+        " / ".join(variants) for variants in c.get("must_contain_any", [])
+        if not any(variant.casefold() in normalized for variant in variants)
+    )
+    src_ok = all(any(_match(e, *g) for g in cited) for e in c.get("expected_sources", []))
+    if last.get("status") == "conflict":
+        src_ok = src_ok and len(set(cited)) >= 2
     leak = [f"{d}::{s}" for d, s, st in cited if any(_match(n, d, s, st) for n in c.get("must_not_cite", []))]
     tok = _tokens(last)
     return {

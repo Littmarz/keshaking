@@ -91,5 +91,25 @@ class TestApiRunner(unittest.TestCase):
         self.assertTrue(list(run.REPORTS.glob("*_api_runs.jsonl")))
 
 
+class TestAnswerEvaluation(unittest.TestCase):
+    def test_equivalent_deadline_wording_preserves_the_strict_boundary(self):
+        case = run.load(run.DATASET, {"c01"})[0]
+        for phrase, correct in (("более 5 рабочих дней", True), ("более пяти рабочих дней", True),
+                                ("через 5 рабочих дней", False), ("более 15 рабочих дней", False)):
+            with self.subTest(phrase=phrase):
+                answer = f"Если прошло {phrase}, статус «Отклонён». Для возврата нужен статус «Новый»."
+                last = {"status": "answered", "answer": answer}
+                self.assertEqual(run._judge(case, case["expected_status"], last, 0)["facts_ok"], correct)
+
+    def test_conflict_requires_distinct_sources_with_expected_section(self):
+        case = run.load(run.DATASET, {"c09"})[0]
+        first = {"doc_id": "ib-project", "section": "2.3"}
+        second = {"doc_id": "ib-project", "section": "2.3.1"}
+        for citations, correct in (([first], False), ([first, first], False), ([first, second], True)):
+            with self.subTest(citations=citations):
+                last = {"status": "conflict", "citations": citations}
+                self.assertEqual(run._judge(case, ["conflict"], last, 0)["sources_ok"], correct)
+
+
 if __name__ == "__main__":
     unittest.main()
