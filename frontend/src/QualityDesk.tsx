@@ -1,8 +1,15 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { login, request, type Entry, type Ticket } from './api';
+import { login, request, type Citation, type Entry, type Ticket } from './api';
 
 const statuses = { open: 'Открыто', answered: 'Черновик', published: 'Опубликовано' };
-type TicketDetail = Ticket & { qa_entry: Entry | null; test_mail?: boolean };
+type TicketDetail = Ticket & {
+  qa_entry: Entry | null;
+  test_mail?: boolean;
+  context?: {
+    reason?: string;
+    conflict_sources?: Pick<Citation, 'chunk_id' | 'doc_title' | 'section' | 'source_type'>[];
+  };
+};
 
 export function QualityDesk({ initialTicket }: { initialTicket: string | null }) {
   const [token, setToken] = useState('');
@@ -109,7 +116,7 @@ export function QualityDesk({ initialTicket }: { initialTicket: string | null })
         <div className="card queue">
           <h2>Обращения <span className="counter">{tickets.length}</span></h2>
           {busy && !tickets.length && <p role="status">Загружаю очередь…</p>}
-          {!busy && !tickets.length && !error && <p>Здесь появятся вопросы, на которые агент не нашёл ответа.</p>}
+          {!busy && !tickets.length && !error && <p>Здесь появятся вопросы без ответа и сообщения о расхождениях.</p>}
           {tickets.map((ticket) => (
             <button className="ticket-row" type="button" key={ticket.ticket_id} disabled={busy}
               aria-pressed={selected?.ticket_id === ticket.ticket_id} onClick={() => void openTicket(ticket.ticket_id)}>
@@ -122,6 +129,18 @@ export function QualityDesk({ initialTicket }: { initialTicket: string | null })
           <div className="card review">
             <p className="eyebrow">Обращение {selected.ticket_id}</p>
             <h2>{selected.question}</h2>
+            {selected.context?.conflict_sources?.length && (
+              <div>
+                <p>{selected.context.reason}</p>
+                <ul>
+                  {selected.context.conflict_sources.map((source) => (
+                    <li key={source.chunk_id}>{source.doc_title}
+                      {source.source_type === 'regulation' && ` · п. ${source.section}`}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             {selected.status === 'published' ? (
               <div className="published" role="status">
                 <strong>{saved?.confirmed_by === 'quality-mail' ? 'Ответ из письма опубликован' : 'Ответ опубликован'}</strong>

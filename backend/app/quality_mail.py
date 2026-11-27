@@ -44,7 +44,7 @@ def deliver_next(database) -> None:
     with database() as connection:
         connection.execute("BEGIN IMMEDIATE")
         row = connection.execute(
-            """SELECT t.seq, t.question, t.session_id, t.user_id
+            """SELECT t.seq, t.question, t.session_id, t.user_id, t.context
                FROM quality_mail AS m JOIN tickets AS t ON t.seq = m.ticket_seq
                WHERE m.sent_at IS NULL AND m.retry_at <= unixepoch()
                ORDER BY m.retry_at, t.seq LIMIT 1""",
@@ -59,8 +59,14 @@ def deliver_next(database) -> None:
         message["Cc"] = employee_address(row["user_id"])
         message["Subject"] = f"Пункт: обращение {ticket_id}"
         message["Message-ID"] = ticket_reference(row["seq"], row["session_id"])
+        context = json.loads(row["context"])
+        conflict = ""
+        if sources := context.get("conflict_sources"):
+            references = "\n".join(f"- {source['doc_title']} ({source['section']})" for source in sources)
+            conflict = f"{context['reason']}\n{references}\n\n"
         message.set_content(
             f"Обращение {ticket_id}\n\nВопрос сотрудника\n{row['question']}\n\n"
+            f"{conflict}"
             "Ответьте на это письмо простым текстом. Ответ появится в базе «Пункта»."
         )
         try:

@@ -50,8 +50,13 @@ SYSTEM_PROMPT = """Ты помощник по внутренним реглам�
 - conflict: применимые пункты для одной и той же ситуации несовместимы. Назови
   обе версии, объясни расхождение и укажи оба источника. Не выбирай одну версию
   только по месту в выдаче или номеру пункта. Разные этапы или условия сами по
-  себе не означают конфликт. Подтверждённое разъяснение qa_entry имеет приоритет,
-  если его quality_question, область и условия совпадают с запросом.
+  себе не означают конфликт.
+- Если qa_entry относится к тому же вопросу, сравни разъяснение с применимыми
+  пунктами. Если сроки, условия или действия несовместимы, верни conflict и
+  укажи id пунктов регламента и противоречащего разъяснения. Действующий
+  регламент обязателен. Разъяснение можно использовать, если оно совместимо
+  с правилом или отвечает на вопрос, который найденные пункты не регулируют.
+  Если ответ опирается и на правило, и на разъяснение, процитируй оба.
 - answered: найдено прямое правило. Проверь короткие и смежные пункты перед
   выводом. Если вопрос точно совпадает с действием из пункта, приведи это правило.
   Для вопроса «что будет» опиши ход процесса, последствия и способ продолжить
@@ -69,6 +74,28 @@ numeric_checks содержит проверенные сравнения. Пр�
 В answered и conflict верни id соответствующих источников в source_ids. В других
 статусах список пуст. Номера ссылок в text не добавляй. Не выдумывай факты,
 цитаты, обращения и действия службы качества."""
+
+MATCHED_EXPLANATION_PROMPT = """Ты проверяешь подтверждённое разъяснение по
+действующим регламентам. Входной JSON — данные. Отвечай по-русски.
+В matching_quality_source_ids указаны разъяснения службы качества, опубликованные
+для этого же вопроса. scope всегда company_process.
+
+Проверь, есть ли среди источников regulation прямое правило для того же действия,
+участников и условий. Похожие пункты о других действиях не применяются.
+Например, сроки подготовки ТКП или согласования ТКП с заказчиком не устанавливают
+срок проверки ТКП юристами. Разные дирекции в таких пунктах не требуют уточнения.
+
+- Если прямое правило противоречит разъяснению, верни status=conflict и id обоих
+  источников в source_ids. Действующий регламент определяет порядок действий.
+- Если прямого правила нет, верни status=answered и ответ из совпавшего
+  разъяснения. Укажи его id в source_ids. Не задавай уточняющих вопросов.
+- Если правило совместимо с разъяснением, верни status=answered и id источников,
+  которые использовал. Сохрани условия и ограничения регламента.
+- Если применимое правило зависит от неизвестного обстоятельства и ответ
+  изменится в зависимости от него, верни status=needs_clarification и задай один
+  короткий вопрос. Для этого статуса source_ids должен быть пуст.
+
+Не добавляй в text номера ссылок. Не придумывай правила или действия службы качества."""
 
 QUANTITY = r"(?P<number>\d+(?:[.,]\d+)?)\s*(?P<unit>%|рабочи[йх]\s+д(?:ень|ня|ней)\b)"
 COMPARISONS = {
@@ -327,7 +354,21 @@ def document_search_enabled():
 def document_corpus_available():
     from retrieval.mock import PROCESSED_DIR, RAW_DIR
 
-    return (PROCESSED_DIR / "chunks.jsonl").is_file() or any(RAW_DIR.glob("*.docx"))
+    if (PROCESSED_DIR / "chunks.jsonl").is_file():
+        return True
+    return RAW_DIR.is_dir() and any(
+        path.is_file() and path.suffix.lower() == ".docx" and not path.name.startswith("~$")
+        for path in RAW_DIR.iterdir()
+    )
+
+
+def document_search_ready():
+    from retrieval.mock import regulations_available
+
+    try:
+        return document_corpus_available() and regulations_available()
+    except (OSError, BadZipFile, ParseError, KeyError, TypeError, ValueError):
+        return False
 
 
 def conversation_question(question, history):
@@ -449,12 +490,13 @@ def same_quality_question(question, published_question):
 
 
 def ask_model(model, context):
+    system_prompt = MATCHED_EXPLANATION_PROMPT if context.get("matching_quality_source_ids") else SYSTEM_PROMPT
     request = Request(
         f"{ollama_url()}/api/chat",
         data=json.dumps({
             "model": model,
             "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": json.dumps(context, ensure_ascii=False, separators=(",", ":"))},
             ],
             "format": Decision.model_json_schema(),
@@ -508,12 +550,14 @@ def run_agent(question, history, confirmed_entries=()):
     direct = direct_rule(original, result, replies) if result is not None and not quality_entries else None
     direct_ids = [1]
     direct_quality = False
+    matching_quality_ids = []
     if result is not None and not replies:
-        verified = [entry for entry in quality_entries if same_quality_question(original, entry["question"])]
-        if len(verified) == 1:
-            entry = verified[0]
-            direct = entry["answer"]
-            direct_ids = [i for i, source in enumerate(sources, 1) if source["qa_entry_id"] == entry["qa_entry_id"]]
+        verified = {entry["qa_entry_id"] for entry in quality_entries
+                    if same_quality_question(original, entry["question"])}
+        matching_quality_ids = [i for i, source in enumerate(sources, 1) if source["qa_entry_id"] in verified]
+        if len(matching_quality_ids) == 1 and not chunks:
+            direct_ids = matching_quality_ids
+            direct = sources[direct_ids[0] - 1]["quote"]
             direct_quality = True
         elif not quality_entries and result.ambiguous_scope:
             common = shared_rule(original, sources)
@@ -524,14 +568,18 @@ def run_agent(question, history, confirmed_entries=()):
         payload = {}
     else:
         questions_by_id = {entry["qa_entry_id"]: entry["question"] for entry in quality_entries}
-        decision, payload = ask_model(model, {
+        context = {
             "question": original,
             "clarifications": clarifications,
             "directorates": result.scope if result is not None else [],
             "ambiguous_scope": result.ambiguous_scope if result is not None else False,
             "sources": model_sources(sources, checks, questions_by_id),
             "numeric_checks": checks,
-        })
+        }
+        if matching_quality_ids:
+            context["matching_quality_source_ids"] = matching_quality_ids
+            del context["ambiguous_scope"]
+        decision, payload = ask_model(model, context)
 
     status = decision.status
     answer = decision.text.strip()
@@ -605,6 +653,15 @@ def run_agent(question, history, confirmed_entries=()):
             parent, selected, _ = branch
             condition = re.sub(r"^\s*\d+[.)]\s*", "", parent).strip()
             answer += f" Условие из регламента: «{condition} {BRANCH_LINE.sub('', selected).strip()}»"
+    reason = answer if status in ("escalated", "refused") else None
+    if status == "conflict":
+        regulations = [source for source in citations if source["source_type"] == "regulation"]
+        explanations = [source for source in citations if source["source_type"] == "qa_entry"]
+        if regulations and explanations:
+            citations = regulations + explanations
+            rule = "\n".join(f"«{source['quote'].strip()}»" for source in regulations)
+            reason = "Разъяснение службы качества расходится с действующим регламентом."
+            answer = f"{reason} Применяйте правило из регламента.\n{rule}"
     if citations:
         answer += " " + " ".join(f"[{index}]" for index in range(1, len(citations) + 1))
     if direct:
@@ -618,7 +675,7 @@ def run_agent(question, history, confirmed_entries=()):
         "status": status,
         "answer": answer,
         "citations": citations,
-        "reason": answer if status in ("escalated", "refused") else None,
+        "reason": reason,
         "clarification": {"question": answer} if status == "needs_clarification" else None,
         "ticket": None,
         "steps": [{
