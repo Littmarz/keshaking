@@ -107,7 +107,7 @@ DAY_COUNTS = {
     "шести": 6, "семи": 7, "восьми": 8, "девяти": 9, "десяти": 10,
 }
 REPLY_THRESHOLD = re.compile(
-    rf"\bболее\s+(?P<days>\d+|{'|'.join(DAY_COUNTS)})\s+"
+    rf"\b(?P<operator>более|не\s+менее)\s+(?P<days>\d+|{'|'.join(DAY_COUNTS)})\s+"
     r"(?:рабочего дня|рабочих д(?:ня|ней))\b",
     re.IGNORECASE,
 )
@@ -224,7 +224,8 @@ def reply_deadline(source):
            " ".join(subject.casefold().split()), transition["state"].casefold().replace("ё", "е"))
     number = threshold["days"].casefold()
     days = int(number) if number.isdecimal() else DAY_COUNTS[number]
-    return key, days, quote[threshold.start():threshold.end()]
+    operator = " ".join(threshold["operator"].casefold().split())
+    return key, (operator, days), quote[threshold.start():threshold.end()]
 
 
 def conflicting_reply_deadlines(sources, citations):
@@ -233,9 +234,9 @@ def conflicting_reply_deadlines(sources, citations):
     for source, deadline in deadlines:
         if source["chunk_id"] not in cited_ids or not deadline:
             continue
-        key, days, wording = deadline
+        key, boundary, wording = deadline
         for other, candidate in deadlines:
-            if candidate and candidate[0] == key and candidate[1] != days:
+            if candidate and candidate[0] == key and candidate[1] != boundary:
                 return [(source, wording), (other, candidate[2])]
     return []
 
@@ -567,14 +568,17 @@ def run_agent(question, history, confirmed_entries=()):
             status = "needs_clarification"
             answer = "К какой дирекции относится вопрос? Если известен этап процесса, укажите и его."
             citations = []
-    if status == "answered" and result is not None and not relies_on_quality and DEADLINE_QUESTION.search(original):
-        competing = conflicting_reply_deadlines(sources, citations)
+    if (result is not None and not relies_on_quality and DEADLINE_QUESTION.search(original)
+            and (status == "answered" or (status == "conflict" and len(citations) == 2))):
+        deadline_sources = citations if status == "conflict" else sources
+        competing = conflicting_reply_deadlines(deadline_sources, citations)
         if competing:
             citations = [source for source, _ in competing]
             status = "conflict"
-            first, second = (f"по пункту {source['section']} — {wording.lower()}" for source, wording in competing)
+            first, second = (f"п. {source['section']} — {wording.lower()}" for source, wording in competing)
             answer = (
-                f"Источники расходятся. Для одной и той же ситуации {first}, а {second}. "
+                f"Источники расходятся. Для одной и той же ситуации в первом источнике {first}, "
+                f"а во втором {second}. "
                 "Уточните в службе качества, какой срок применять."
             )
     if status == "answered" and result is not None and not relies_on_quality:

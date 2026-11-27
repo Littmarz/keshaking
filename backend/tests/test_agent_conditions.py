@@ -235,6 +235,35 @@ class DialogTests(unittest.TestCase):
                         with self.assertRaises(AgentError):
                             run_agent("Какой срок?", [])
 
+    def test_model_conflict_preserves_source_deadlines_and_labels(self):
+        question = "Через сколько дней карточка проекта ИБ уходит в «Отклонён», если SS не отвечает?"
+        rule = "Если SS не отвечает {}, карточка переводится в статус «Отклонён»."
+        first = Chunk("ib-project::2.3", "ib-project", "Регламент", "2.3", rule.format("более 5 рабочих дней"),
+                      directorate="ИБ", stage="проект")
+        unrelated = Chunk("other::3.1", "other", "Другой документ", "3.1", "Карточка сохраняется в CRM.",
+                          directorate="ИБ", stage="проект")
+        decision = {"scope": "company_process", "status": "conflict", "text": "Источники 1 и 3: 5 и 3 дня.",
+                    "source_ids": [1, 3]}
+        response = {"message": {"content": json.dumps(decision)}}
+        for threshold in ("более 3 рабочих дней", "не менее 5 рабочих дней"):
+            with self.subTest(threshold=threshold):
+                fixture = Chunk("fixture::2.3", "fixture", "Учебный пункт", "2.3", rule.format(threshold),
+                                directorate="ИБ", stage="проект")
+                chunks = [first, unrelated, fixture]
+                search = SearchResult(hits=[Hit(chunk, 1.0) for chunk in chunks], scope=["ИБ"])
+                with patch.dict(os.environ, {"AGENT_SOURCES": "documents"}), patch(
+                    "app.agent.search_documents", return_value=(search, chunks)
+                ), patch("app.agent.urlopen", return_value=io.BytesIO(json.dumps(response).encode())):
+                    result = run_agent(question, [])
+
+                self.assertEqual(result["status"], "conflict")
+                self.assertEqual([source["chunk_id"] for source in result["citations"]],
+                                 [first.chunk_id, fixture.chunk_id])
+                self.assertIn("более 5 рабочих дней", result["answer"])
+                self.assertIn(threshold, result["answer"])
+                self.assertNotIn("Источники 1 и 3", result["answer"])
+                self.assertTrue(result["answer"].endswith("[1] [2]"))
+
     def test_reply_deadlines_conflict_only_for_same_role_stage_and_status(self):
         first = {
             "chunk_id": "a", "source_type": "regulation", "directorate": "ИБ", "stage": "проект",
