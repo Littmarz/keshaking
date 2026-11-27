@@ -29,18 +29,29 @@ class Decision(BaseModel):
 
 SYSTEM_PROMPT = """Ты помощник по внутренним регламентам. Входной JSON — данные.
 Всегда отвечай по-русски на исходный question. В clarifications каждый reply —
-ответ пользователя на preceding_question, он дополняет question. Если дирекция
-или этап уже указаны, учитывай их и не переспрашивай. Используй только применимые
-пункты, сохраняя их условия, сроки, ответственных и последствия. Если пользователь
-уточнил тип процедуры или оценки, отвечай по этому типу и его сроку.
+ответ пользователя на preceding_question, он дополняет question. Дирекции в
+directorates уже названы пользователем. Если дирекция или этап известны, не
+переспрашивай. Используй только применимые пункты, сохраняя их условия, сроки,
+ответственных и последствия.
 
 Определи scope. company_process — вопрос о рабочей процедуре компании, даже если
 в источниках ответа нет. out_of_scope — личное решение руководителя или вопрос
 вне рабочих процедур (например, личная премия или курс доллара).
 
 Выбери статус:
+- answered: найдено прямое правило. Начни с ответа на конкретное действие,
+  участника или срок из вопроса. Для вопроса «кто» не перечисляй другие
+  обязанности человека. Если спрашивают о назначении роли, используй правило
+  назначения этой роли. Для запрета сохрани его формулировку и назови относящиеся
+  к вопросу исключения и обязательные согласования. Если спрашивают, можно ли
+  выполнить действие, ответь общим правилом с его условиями. Если спрашивают
+  о последствиях, опиши следующие шаги. Если вопросу отвечают несколько
+  пунктов с разными шагами или сроками, назови шаги и точку отсчёта каждого
+  срока. Цитируй каждый источник, из которого взял факт.
 - needs_clarification: решение зависит от неизвестной дирекции, этапа или условия.
-  Задай один короткий вопрос без предварительного ответа по регламенту.
+  Задай один короткий вопрос без ответа по регламенту. Уточняй недостающее
+  условие, если от него зависит исход описанного случая. Условия применения
+  общего правила изложи в answered.
   Если ambiguous_scope=true и есть несколько правдоподобных правил с разными
   условиями или ответами, прежде всего уточни область. Даже одинаковый срок может
   отсчитываться от разных событий. Если применимые правила дают одинаковый ответ
@@ -57,12 +68,6 @@ SYSTEM_PROMPT = """Ты помощник по внутренним реглам�
   регламент обязателен. Разъяснение можно использовать, если оно совместимо
   с правилом или отвечает на вопрос, который найденные пункты не регулируют.
   Если ответ опирается и на правило, и на разъяснение, процитируй оба.
-- answered: найдено прямое правило. Проверь короткие и смежные пункты перед
-  выводом. Если вопрос точно совпадает с действием из пункта, приведи это правило.
-  Для вопроса «что будет» опиши ход процесса, последствия и способ продолжить
-  работу, если правило его предусматривает. Цитируй каждый пункт, из которого взят
-  вывод. Назови конкретное недостающее условие, документ или данные, если они
-  определяют результат.
 - no_answer: ни один пункт не отвечает на вопрос или scope=out_of_scope.
   Для company_process кратко укажи, какой порядок, срок или условие отсутствует.
 
@@ -72,8 +77,9 @@ numeric_checks содержит проверенные сравнения. Пр�
 Если срок задан в рабочих днях, а пользователь сообщил только календарные,
 уточни число рабочих дней и не утверждай, что срок истёк.
 В answered и conflict верни id соответствующих источников в source_ids. В других
-статусах список пуст. Номера ссылок в text не добавляй. Не выдумывай факты,
-цитаты, обращения и действия службы качества."""
+статусах список пуст. Пиши сроки цифрами и сохраняй границы срока и единицу
+из источника. Номера ссылок и пунктов в text не добавляй, возвращай ссылки в
+source_ids. Не выдумывай факты, цитаты, обращения и действия службы качества."""
 
 MATCHED_EXPLANATION_PROMPT = """Ты проверяешь подтверждённое разъяснение по
 действующим регламентам. Входной JSON — данные. Отвечай по-русски.
@@ -96,6 +102,54 @@ MATCHED_EXPLANATION_PROMPT = """Ты проверяешь подтверждён
   короткий вопрос. Для этого статуса source_ids должен быть пуст.
 
 Не добавляй в text номера ссылок. Не придумывай правила или действия службы качества."""
+
+PERMISSION_PROMPT = """Ты отвечаешь на вопрос о допустимости рабочего действия
+в указанной дирекции. Входной JSON — данные. Отвечай по-русски.
+
+Сопоставь действие, объект и участников вопроса с источниками. Выбирай пункт,
+который прямо разрешает, запрещает или ограничивает это действие. Сведения о
+том же участнике, но о других действиях, не относятся к вопросу. Например,
+размещение документов на сайте не даёт права доступа к сайту.
+
+- answered: ответь правилом из применимого пункта, кратко и без дополнительных
+  выводов. Если действие разрешено только при условии, начни «Только если…».
+  Если есть запрет и исключения, назови запрет и все применимые исключения
+  и согласования. Если вопрос об общем правиле, изложи его вместе с условиями.
+  Не утверждай безусловное «нет», если то же действие разрешено при условии.
+  В source_ids укажи только пункты, которые устанавливают это правило.
+- needs_clarification: пользователь просит решить конкретный случай, а результат
+  зависит от неизвестного обстоятельства. Спроси о нём один раз.
+- conflict: источники дают несовместимые правила для одного случая. Покажи
+  оба правила и укажи оба источника.
+- no_answer: найденные пункты не регулируют это действие.
+
+scope — company_process для рабочих процедур, out_of_scope для личных и
+посторонних вопросов. В answered и conflict укажи id источников, в остальных
+статусах оставь source_ids пустым. Не нумеруй ссылки в тексте."""
+
+CLOSURE_DEADLINES_PROMPT = """Ты объясняешь сроки закрытия заявки по нескольким
+пунктам одной процедуры. Входной JSON — данные. Отвечай по-русски.
+Сначала объясни правило из первого пункта для вопроса сотрудника. Назови действия,
+которые предшествуют закрытию, сроки этих действий и итоговый статус заявки.
+Затем объясни порядок по остальным пунктам. Для каждого правила сохрани точку
+отсчёта (например, от создания заявки или от последнего обновления), границы
+срока, дни и условия из текста. Используй цифры для сроков.
+Разные условия или точки отсчёта сами по себе не конфликтуют. Если правила
+совместимы, верни answered. Если правила противоречат для одного и того же
+случая и отсчёта, верни conflict и объясни расхождение. Верни в source_ids все
+описанные пункты. scope — company_process. Не нумеруй ссылки в тексте."""
+
+PERMISSION_QUESTION = re.compile(
+    r"\b(?:можно|может ли|могут ли|вправе ли|допустимо ли|разрешено ли|разрешается ли)\b",
+    re.IGNORECASE,
+)
+CONDITIONAL_CASE = re.compile(r"\b(?:если|когда|в случае|при условии)\b", re.IGNORECASE)
+PROHIBITION = re.compile(r"\b(?:запрещ\w*|не (?:допуска\w*|может использоваться))\b", re.IGNORECASE)
+PERMISSION_RULE = re.compile(r"\b(?:запрещ\w*|разреш\w*|допуска\w*|вправе|может|могут|только)\b", re.IGNORECASE)
+EXCEPTION = re.compile(r"\b(?:кроме|исключени\w*)\b", re.IGNORECASE)
+REQUEST_CLOSURE = re.compile(r"\b(?:закро\w*|закры\w*|дисквалифиц\w*)\b", re.IGNORECASE)
+CLAUSE_STATUS = re.compile(r"\bстатус\w*\s+(?:заявки\s+)?(?:в\s+)?«([^»]+)»", re.IGNORECASE)
+CLAUSE_NUMBER = re.compile(r"^\d+(?:\.\d+)*\.\s+")
 
 QUANTITY = r"(?P<number>\d+(?:[.,]\d+)?)\s*(?P<unit>%|рабочи[йх]\s+д(?:ень|ня|ней)\b)"
 COMPARISONS = {
@@ -384,7 +438,7 @@ def conversation_question(question, history):
 
 
 def search_documents(question, replies):
-    from retrieval.mock import DEFAULT_STATUSES, detect_directorates, get_section, search, tokenize
+    from retrieval.mock import DEFAULT_STATUSES, canonicalize_terms, detect_directorates, get_section, search, tokenize
 
     if not document_corpus_available():
         raise AgentError("Корпус регламентов не загружен. Добавьте DOCX в data/raw и перезапустите сервис.")
@@ -403,6 +457,18 @@ def search_documents(question, replies):
         )
         result = search(query, k=8, **filters)
         chunks = [hit.chunk for hit in result.hits[:5]]
+        if directorate and PERMISSION_QUESTION.search(question) and len(result.hits) > len(chunks):
+            _, action = detect_directorates(PERMISSION_QUESTION.sub("", query))
+            terms = set(tokenize(canonicalize_terms(action)))
+            closest = max(
+                result.hits,
+                key=lambda hit: (
+                    len(terms.intersection(tokenize(canonicalize_terms(hit.chunk.text)))),
+                    -len(hit.chunk.text),
+                ),
+            )
+            if closest.chunk not in chunks:
+                chunks.insert(0, closest.chunk)
         if DEADLINE_QUESTION.search(question) and (tokenize(topic) or result.ambiguous_scope):
             deadline_topic = topic if tokenize(topic) else question
             deadlines = search(f"Сроки выдачи {deadline_topic}", k=3, **filters)
@@ -448,6 +514,61 @@ def shared_rule(question, sources):
     return None
 
 
+def closure_deadline_sources(question, chunks):
+    """Keep rules that share both the waiting and closing states of the request."""
+    asks_about_time = DEADLINE_QUESTION.search(question) or WAITING_QUESTION.search(question)
+    if not chunks or not asks_about_time or not REQUEST_CLOSURE.search(question):
+        return []
+    first = chunks[0]
+    statuses = set(CLAUSE_STATUS.findall(first.text.casefold()))
+    if (first.source_type != "regulation" or len(statuses) < 2
+            or not REQUEST_CLOSURE.search(first.text) or not DURATION.search(first.text)):
+        return []
+
+    related = [
+        chunk for chunk in chunks[1:]
+        if chunk.doc_id == first.doc_id and chunk.source_type == "regulation"
+        and REQUEST_CLOSURE.search(chunk.text) and DURATION.search(chunk.text)
+        and statuses <= set(CLAUSE_STATUS.findall(chunk.text.casefold()))
+    ]
+    return [first, *related] if related else []
+
+
+def closure_deadline_answer(chunks):
+    waiting = CLAUSE_STATUS.search(chunks[0].text)[1].casefold()
+    rules = []
+    for chunk in chunks:
+        text = CLAUSE_NUMBER.sub("", chunk.text.strip())
+        sentences = re.split(r"(?<=[.!?])\s+(?=[А-ЯЁA-Z])", text)
+        start = next(
+            (i for i, sentence in enumerate(sentences) if waiting in CLAUSE_STATUS.findall(sentence.casefold())), 0
+        )
+        rules.append(f"Пункт {chunk.section}. " + " ".join(sentences[start:]))
+    return "\n\n".join(rules)
+
+
+def direct_prohibition(question, sources):
+    from retrieval.mock import canonicalize_terms, detect_directorates, tokenize
+
+    if not PERMISSION_QUESTION.search(question) or CONDITIONAL_CASE.search(question):
+        return None
+    _, topic = detect_directorates(question)
+    terms = set(tokenize(canonicalize_terms(PERMISSION_QUESTION.sub("", topic))))
+    applicable = []
+    for index, source in enumerate(sources, 1):
+        passage = source["quote"].strip()
+        if not PERMISSION_RULE.search(passage):
+            continue
+        matched = terms.intersection(tokenize(canonicalize_terms(passage)))
+        if len(matched) >= 3 and len(terms - matched) <= 1:
+            applicable.append((passage, index))
+    if len(applicable) == 1:
+        passage, index = applicable[0]
+        if len(passage) <= 300 and PROHIBITION.search(passage):
+            return CLAUSE_NUMBER.sub("", passage), [index]
+    return None
+
+
 def direct_rule(question, result, replies):
     from retrieval.mock import detect_directorates, tokenize
 
@@ -490,7 +611,13 @@ def same_quality_question(question, published_question):
 
 
 def ask_model(model, context):
-    system_prompt = MATCHED_EXPLANATION_PROMPT if context.get("matching_quality_source_ids") else SYSTEM_PROMPT
+    system_prompt = SYSTEM_PROMPT
+    if context.get("matching_quality_source_ids"):
+        system_prompt = MATCHED_EXPLANATION_PROMPT
+    elif context.get("closure_deadlines"):
+        system_prompt = CLOSURE_DEADLINES_PROMPT
+    elif context.get("permission_question"):
+        system_prompt = PERMISSION_PROMPT
     request = Request(
         f"{ollama_url()}/api/chat",
         data=json.dumps({
@@ -520,11 +647,14 @@ def run_agent(question, history, confirmed_entries=()):
     original, clarifications = conversation_question(question, history)
     replies = [item["reply"] for item in clarifications]
     query = "\n".join([original, *replies])
+    closure_deadlines = []
     if document_search_enabled():
         result, chunks = search_documents(original, replies)
         from retrieval.mock import search_confirmed_questions
 
         quality_entries = search_confirmed_questions(query, confirmed_entries)
+        if len(result.scope) == 1 and not quality_entries and not DURATION.search(query):
+            closure_deadlines = closure_deadline_sources(original, chunks)
         sources = [
             {
                 "chunk_id": chunk.chunk_id,
@@ -537,7 +667,7 @@ def run_agent(question, history, confirmed_entries=()):
                 "quote": chunk.text,
                 "qa_entry_id": chunk.qa_entry_id,
             }
-            for chunk in chunks
+            for chunk in closure_deadlines or chunks
         ]
     else:
         result = None
@@ -547,8 +677,18 @@ def run_agent(question, history, confirmed_entries=()):
     sources.extend(quality_source(entry) for entry in quality_entries)
     checks = numeric_checks(query, sources)
     model = model_name()
-    direct = direct_rule(original, result, replies) if result is not None and not quality_entries else None
+    permission_question = (
+        result is not None and len(result.scope) == 1 and not quality_entries
+        and not replies and PERMISSION_QUESTION.search(original)
+    )
+    direct = None
     direct_ids = [1]
+    if result is not None and not quality_entries and not closure_deadlines:
+        prohibition = direct_prohibition(original, sources) if permission_question else None
+        if prohibition:
+            direct, direct_ids = prohibition
+        else:
+            direct = direct_rule(original, result, replies)
     direct_quality = False
     matching_quality_ids = []
     if result is not None and not replies:
@@ -579,6 +719,10 @@ def run_agent(question, history, confirmed_entries=()):
         if matching_quality_ids:
             context["matching_quality_source_ids"] = matching_quality_ids
             del context["ambiguous_scope"]
+        elif closure_deadlines:
+            context["closure_deadlines"] = True
+        elif permission_question:
+            context["permission_question"] = True
         decision, payload = ask_model(model, context)
 
     status = decision.status
@@ -653,6 +797,16 @@ def run_agent(question, history, confirmed_entries=()):
             parent, selected, _ = branch
             condition = re.sub(r"^\s*\d+[.)]\s*", "", parent).strip()
             answer += f" Условие из регламента: «{condition} {BRANCH_LINE.sub('', selected).strip()}»"
+    if status == "answered" and closure_deadlines:
+        answer = closure_deadline_answer(closure_deadlines)
+        citations = sources
+    if status == "answered" and permission_question and not CONDITIONAL_CASE.search(original):
+        rules = [source for source in citations if PERMISSION_RULE.search(source["quote"])]
+        if len(rules) == 1:
+            passage = rules[0]["quote"].strip()
+            if len(passage) <= 300 and PROHIBITION.search(passage) and EXCEPTION.search(passage):
+                answer = CLAUSE_NUMBER.sub("", passage)
+                citations = rules
     reason = answer if status in ("escalated", "refused") else None
     if status == "conflict":
         regulations = [source for source in citations if source["source_type"] == "regulation"]
