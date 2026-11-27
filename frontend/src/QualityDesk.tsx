@@ -1,5 +1,5 @@
-import { useEffect, useState, type FormEvent } from 'react';
-import { login, request, type Citation, type Entry, type Ticket } from './api';
+import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { ApiError, request, type Citation, type Entry, type Ticket } from './api';
 
 const statuses = { open: 'Открыто', answered: 'Черновик', published: 'Опубликовано' };
 type TicketDetail = Ticket & {
@@ -11,8 +11,11 @@ type TicketDetail = Ticket & {
   };
 };
 
-export function QualityDesk({ initialTicket }: { initialTicket: string | null }) {
-  const [token, setToken] = useState('');
+export function QualityDesk({ initialTicket, token, onExpired }: {
+  initialTicket: string | null;
+  token: string;
+  onExpired: (token: string) => void;
+}) {
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [selected, setSelected] = useState<TicketDetail | null>(null);
   const [answer, setAnswer] = useState('');
@@ -20,36 +23,47 @@ export function QualityDesk({ initialTicket }: { initialTicket: string | null })
   const [section, setSection] = useState('');
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState('');
+  const [loadAttempt, setLoadAttempt] = useState(0);
 
-  function showTicket(ticket: TicketDetail) {
+  function showTicket(ticket: TicketDetail | null) {
     setSelected(ticket);
-    setAnswer(ticket.qa_entry?.answer ?? '');
-    setDocId(ticket.qa_entry?.doc_id ?? '');
-    setSection(ticket.qa_entry?.section ?? '');
+    setAnswer(ticket?.qa_entry?.answer ?? '');
+    setDocId(ticket?.qa_entry?.doc_id ?? '');
+    setSection(ticket?.qa_entry?.section ?? '');
   }
 
+  const reportError = useCallback((cause: unknown, fallback: string) => {
+    if (cause instanceof ApiError && cause.status === 401) {
+      onExpired(token);
+    } else {
+      setError(cause instanceof Error ? cause.message : fallback);
+    }
+  }, [onExpired, token]);
+
   useEffect(() => {
-    let active = true;
+    const controller = new AbortController();
     async function load() {
+      setBusy(true);
+      setError('');
       try {
-        const key = await login('quality');
-        const groups = await Promise.all(Object.keys(statuses).map((status) => request<Ticket[]>(`/tickets?status=${status}`, key)));
+        const groups = await Promise.all(Object.keys(statuses).map((status) => (
+          request<Ticket[]>(`/tickets?status=${status}`, token, undefined, controller.signal)
+        )));
         const rows = groups.flat().sort((a, b) => b.created_at.localeCompare(a.created_at));
         const first = rows.find((row) => row.ticket_id === initialTicket) ?? rows[0];
-        const detail = first ? await request<TicketDetail>(`/tickets/${first.ticket_id}`, key) : null;
-        if (!active) return;
-        setToken(key);
+        const detail = first ? await request<TicketDetail>(`/tickets/${first.ticket_id}`, token, undefined, controller.signal) : null;
+        if (controller.signal.aborted) return;
         setTickets(rows);
-        if (detail) showTicket(detail);
+        showTicket(detail);
       } catch (cause) {
-        if (active) setError(cause instanceof Error ? cause.message : 'Очередь недоступна.');
+        if (!controller.signal.aborted) reportError(cause, 'Очередь недоступна.');
       } finally {
-        if (active) setBusy(false);
+        if (!controller.signal.aborted) setBusy(false);
       }
     }
     void load();
-    return () => { active = false; };
-  }, [initialTicket]);
+    return () => controller.abort();
+  }, [initialTicket, token, loadAttempt, reportError]);
 
   async function openTicket(id: string) {
     setBusy(true);
@@ -57,7 +71,7 @@ export function QualityDesk({ initialTicket }: { initialTicket: string | null })
     try {
       showTicket(await request<TicketDetail>(`/tickets/${id}`, token));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Обращение недоступно.');
+      reportError(cause, 'Обращение недоступно.');
     } finally {
       setBusy(false);
     }
@@ -79,24 +93,24 @@ export function QualityDesk({ initialTicket }: { initialTicket: string | null })
       });
       updateTicket(entry, 'answered');
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Черновик не сохранился.');
+      reportError(cause, 'Черновик не сохранился.');
     } finally {
       setBusy(false);
     }
   }
 
-  async function confirm() {
+  async function confirm(useTestMail: boolean) {
     if (!selected?.qa_entry || busy) return;
     setError('');
     setBusy(true);
     try {
-      const path = selected.test_mail
+      const path = useTestMail
         ? `/tickets/${selected.ticket_id}/test-mail-reply`
         : `/qa/${selected.qa_entry.qa_entry_id}/confirm`;
       const entry = await request<Entry>(path, token, {});
       updateTicket(entry, 'published');
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Публикация не удалась.');
+      reportError(cause, 'Публикация не удалась.');
     } finally {
       setBusy(false);
     }
@@ -114,7 +128,12 @@ export function QualityDesk({ initialTicket }: { initialTicket: string | null })
       {error && <p className="error" role="alert">{error}</p>}
       <div className="quality-grid">
         <div className="card queue">
-          <h2>Обращения <span className="counter">{tickets.length}</span></h2>
+          <div className="queue-title">
+            <h2>Обращения <span className="counter">{tickets.length}</span></h2>
+            <button className="secondary" type="button" disabled={busy} onClick={() => setLoadAttempt((attempt) => attempt + 1)}>
+              Обновить
+            </button>
+          </div>
           {busy && !tickets.length && <p role="status">Загружаю очередь…</p>}
           {!busy && !tickets.length && !error && <p>Здесь появятся вопросы без ответа и сообщения о расхождениях.</p>}
           {tickets.map((ticket) => (
@@ -129,7 +148,7 @@ export function QualityDesk({ initialTicket }: { initialTicket: string | null })
           <div className="card review">
             <p className="eyebrow">Обращение {selected.ticket_id}</p>
             <h2>{selected.question}</h2>
-            {selected.context?.conflict_sources?.length && (
+            {selected.context?.conflict_sources?.length ? (
               <div>
                 <p>{selected.context.reason}</p>
                 <ul>
@@ -140,7 +159,7 @@ export function QualityDesk({ initialTicket }: { initialTicket: string | null })
                   ))}
                 </ul>
               </div>
-            )}
+            ) : null}
             {selected.status === 'published' ? (
               <div className="published" role="status">
                 <strong>{saved?.confirmed_by === 'quality-mail' ? 'Ответ из письма опубликован' : 'Ответ опубликован'}</strong>
@@ -157,16 +176,14 @@ export function QualityDesk({ initialTicket }: { initialTicket: string | null })
                 </div>
                 <div className="review-actions">
                   <button className="secondary" disabled={busy || !answer.trim() || !hasEdits}>Сохранить черновик</button>
-                  {saved && (
-                    <button className="primary" type="button" disabled={busy || hasEdits} onClick={() => void confirm()}>
-                      {selected.test_mail ? 'Отправить тестовый ответ письмом' : 'Подтвердить и опубликовать'}
-                    </button>
-                  )}
+                  {saved && <button className="primary" type="button" disabled={busy || hasEdits} onClick={() => void confirm(false)}>
+                    Подтвердить и опубликовать
+                  </button>}
+                  {saved && selected.test_mail && <button className="secondary" type="button" disabled={busy || hasEdits}
+                    onClick={() => void confirm(true)}>Отправить тестовый ответ письмом</button>}
                 </div>
                 {saved && <p className="draft-note" role="status">
-                  {selected.test_mail
-                    ? 'Черновик сохранён. После отправки «Пункт» опубликует полученный из почты ответ.'
-                    : 'Черновик сохранён. После подтверждения его можно найти из нового чата.'}
+                  После публикации сотрудник увидит ответ в исходном чате.
                 </p>}
               </form>
             )}
