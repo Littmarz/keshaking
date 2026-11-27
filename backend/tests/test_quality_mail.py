@@ -2,8 +2,10 @@ import asyncio
 import os
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from email.message import EmailMessage
 from pathlib import Path
+from threading import Event
 from unittest.mock import patch
 
 from fastapi import HTTPException
@@ -12,6 +14,53 @@ from app import main, quality_mail
 
 
 class QualityMailTests(unittest.TestCase):
+    def test_mailbox_send_does_not_block_chat_writes_or_send_twice(self):
+        cases = (("notice", quality_mail.deliver_next), ("reply", quality_mail.deliver_next_reply))
+        for kind, deliver in cases:
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as folder, patch.dict(
+                os.environ, {"KESHAKING_DB_PATH": str(Path(folder) / "punkt.sqlite3"), "PUNKT_TEST_MAIL": "0"}
+            ):
+                async def initialize():
+                    async with main.lifespan(main.app):
+                        pass
+
+                asyncio.run(initialize())
+                employee = main.USERS["employee"]
+                session = main.create_session(employee)["session_id"]
+                with patch.dict(os.environ, {"PUNKT_TEST_MAIL": "1"}):
+                    with main.database() as connection:
+                        ticket = main.create_ticket(connection, employee["user_id"], session, "Какой срок?", "Нет ответа.")
+                    if kind == "reply":
+                        answer = main.save_ticket_answer(ticket["ticket_id"], main.TicketAnswer(answer="Пять дней."))
+                        main.confirm_answer(answer["qa_entry_id"], main.USERS["quality"])
+
+                smtp_started = Event()
+                smtp_release = Event()
+
+                def slow_send(_message):
+                    smtp_started.set()
+                    if not smtp_release.wait(10):
+                        raise AssertionError("Test did not release mocked SMTP")
+
+                with patch.object(quality_mail, "send", side_effect=slow_send) as send, ThreadPoolExecutor(2) as pool:
+                    first = pool.submit(deliver, main.database)
+                    try:
+                        self.assertTrue(smtp_started.wait(5), "Delivery did not reach SMTP")
+                        with main.database() as connection:
+                            connection.execute("PRAGMA busy_timeout = 0")
+                            connection.execute(
+                                "INSERT INTO sessions (session_id, user_id, created_at) VALUES (?, ?, datetime('now'))",
+                                ("chat-created-during-smtp", employee["user_id"]),
+                            )
+                        self.assertIn("chat-created-during-smtp", {item["session_id"] for item in main.sessions(employee)})
+                        second = pool.submit(deliver, main.database)
+                        second.result(timeout=5)
+                    finally:
+                        smtp_release.set()
+                    first.result(timeout=5)
+                    deliver(main.database)
+                    send.assert_called_once()
+
     def test_mixed_conflict_creates_separate_ticket_and_notifies_quality_once(self):
         with tempfile.TemporaryDirectory() as folder, patch.dict(
             os.environ, {"KESHAKING_DB_PATH": str(Path(folder) / "punkt.sqlite3"),
