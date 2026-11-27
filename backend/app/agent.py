@@ -107,7 +107,7 @@ DAY_COUNTS = {
     "шести": 6, "семи": 7, "восьми": 8, "девяти": 9, "десяти": 10,
 }
 REPLY_THRESHOLD = re.compile(
-    rf"\bболее\s+(?P<days>\d+|{'|'.join(DAY_COUNTS)})\s+"
+    rf"\b(?P<operator>не\s+(?:более|менее)|более)\s+(?P<days>\d+|{'|'.join(DAY_COUNTS)})\s+"
     r"(?:рабочего дня|рабочих д(?:ня|ней))\b",
     re.IGNORECASE,
 )
@@ -204,7 +204,7 @@ def workday_answer(question, source, checks):
     return f"Условие «{check['условие']}» при указанном сроке {outcome}. {quote}", False
 
 
-def reply_deadline(source):
+def reply_deadline(source, *, include_inclusive=False):
     """Identify a deadline for changing an object's status when a named role fails to reply."""
     from retrieval.mock import detect_directorates
 
@@ -213,6 +213,9 @@ def reply_deadline(source):
     quote = source["quote"]
     threshold = REPLY_THRESHOLD.search(quote.replace("ё", "е").replace("Ё", "Е"))
     if not threshold:
+        return None
+    operator = " ".join(threshold["operator"].casefold().split())
+    if operator != "более" and not (include_inclusive and operator == "не менее"):
         return None
     condition = quote[:threshold.start()]
     reply = NO_REPLY.fullmatch(condition)
@@ -224,18 +227,18 @@ def reply_deadline(source):
            " ".join(subject.casefold().split()), transition["state"].casefold().replace("ё", "е"))
     number = threshold["days"].casefold()
     days = int(number) if number.isdecimal() else DAY_COUNTS[number]
-    return key, days, quote[threshold.start():threshold.end()]
+    return key, (operator, days), quote[threshold.start():threshold.end()]
 
 
-def conflicting_reply_deadlines(sources, citations):
-    deadlines = [(source, reply_deadline(source)) for source in sources]
+def conflicting_reply_deadlines(sources, citations, *, include_inclusive=False):
+    deadlines = [(source, reply_deadline(source, include_inclusive=include_inclusive)) for source in sources]
     cited_ids = {source["chunk_id"] for source in citations}
     for source, deadline in deadlines:
         if source["chunk_id"] not in cited_ids or not deadline:
             continue
-        key, days, wording = deadline
+        key, boundary, wording = deadline
         for other, candidate in deadlines:
-            if candidate and candidate[0] == key and candidate[1] != days:
+            if candidate and candidate[0] == key and candidate[1] != boundary:
                 return [(source, wording), (other, candidate[2])]
     return []
 
@@ -567,14 +570,18 @@ def run_agent(question, history, confirmed_entries=()):
             status = "needs_clarification"
             answer = "К какой дирекции относится вопрос? Если известен этап процесса, укажите и его."
             citations = []
-    if status == "answered" and result is not None and not relies_on_quality and DEADLINE_QUESTION.search(original):
-        competing = conflicting_reply_deadlines(sources, citations)
+    if (result is not None and not relies_on_quality and DEADLINE_QUESTION.search(original)
+            and (status == "answered" or (status == "conflict" and len(citations) == 2))):
+        model_conflict = status == "conflict"
+        deadline_sources = citations if model_conflict else sources
+        competing = conflicting_reply_deadlines(deadline_sources, citations, include_inclusive=model_conflict)
         if competing:
             citations = [source for source, _ in competing]
             status = "conflict"
-            first, second = (f"по пункту {source['section']} — {wording.lower()}" for source, wording in competing)
+            first, second = (f"п. {source['section']} — {wording.lower()}" for source, wording in competing)
             answer = (
-                f"Источники расходятся. Для одной и той же ситуации {first}, а {second}. "
+                f"Источники расходятся. Для одной и той же ситуации в первом источнике {first}, "
+                f"а во втором {second}. "
                 "Уточните в службе качества, какой срок применять."
             )
     if status == "answered" and result is not None and not relies_on_quality:
