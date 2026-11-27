@@ -1,11 +1,16 @@
 """Проверка eval --target api на заглушке HTTP API «Пункта» (только стандартная библиотека)."""
 
 import json
+import os
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from unittest.mock import patch
 
 from eval import run
+
+
+PASSWORDS = {"employee": "staff-test-secret", "quality": "quality-test-secret"}
 
 
 class _Stub(BaseHTTPRequestHandler):
@@ -31,6 +36,8 @@ class _Stub(BaseHTTPRequestHandler):
         body = json.loads(self.rfile.read(n) or b"{}")
         p = self.path
         if p == "/auth/login":
+            if body.get("password") != PASSWORDS.get(body["user_id"]):
+                return self._send({"detail": "invalid password"}, 401)
             return self._send({"token": body["user_id"], "user": {}})
         if p == "/chat/sessions":
             return self._send({"session_id": "s"})
@@ -57,6 +64,9 @@ class _Stub(BaseHTTPRequestHandler):
 
 class TestApiRunner(unittest.TestCase):
     def setUp(self):
+        self.enterContext(patch.dict(os.environ, {
+            f"PUNKT_{role.upper()}_PASSWORD": password for role, password in PASSWORDS.items()
+        }))
         _Stub.tickets, _Stub.confirmed = {}, []
         self.srv = ThreadingHTTPServer(("127.0.0.1", 0), _Stub)
         threading.Thread(target=self.srv.serve_forever, daemon=True).start()

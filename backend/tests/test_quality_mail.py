@@ -14,6 +14,12 @@ from app import main, quality_mail
 
 
 class QualityMailTests(unittest.TestCase):
+    def setUp(self):
+        self.enterContext(patch.dict(os.environ, {
+            "PUNKT_EMPLOYEE_PASSWORD": "staff-test-secret",
+            "PUNKT_QUALITY_PASSWORD": "quality-test-secret",
+        }))
+
     def test_mailbox_send_does_not_block_chat_writes_or_send_twice(self):
         cases = (("notice", quality_mail.deliver_next), ("reply", quality_mail.deliver_next_reply))
         for kind, deliver in cases:
@@ -105,7 +111,7 @@ class QualityMailTests(unittest.TestCase):
             self.assertIn("расходится с регламентом", message.get_content())
             self.assertIn("Регламент (1.2)", message.get_content())
 
-    def test_publishes_only_the_matching_reply_once(self):
+    def test_mail_creates_one_private_draft_until_expert_confirms(self):
         with tempfile.TemporaryDirectory() as folder, patch.dict(
             os.environ, {"KESHAKING_DB_PATH": str(Path(folder) / "punkt.sqlite3"), "PUNKT_TEST_MAIL": "0"}
         ):
@@ -123,26 +129,45 @@ class QualityMailTests(unittest.TestCase):
                 quality_mail.deliver_next(main.database)
             send.assert_called_once()
             outgoing = send.call_args.args[0]
-            self.assertEqual(str(outgoing["Cc"]), "employee@demo.invalid")
+            self.assertIsNone(outgoing["Cc"])
+            self.assertEqual(str(outgoing["To"]), quality_mail.QUALITY_ADDRESS)
+            with patch.object(quality_mail, "send") as send:
+                quality_mail.deliver_next_copy(main.database)
+                quality_mail.deliver_next_copy(main.database)
+            send.assert_called_once()
+            copy = send.call_args.args[0]
+            self.assertEqual(str(copy["To"]), "employee@demo.invalid")
+            self.assertNotIn(str(outgoing["Message-ID"]), copy.as_string())
+            self.assertEqual(str(copy["Message-ID"]), quality_mail.copy_reference("Q-0001"))
 
-            def receive(sender, reference, answer, cc=None):
+            def receive(sender, reference, answer):
                 message = EmailMessage()
                 message["From"] = sender
                 message["To"] = outgoing["From"]
-                if cc:
-                    message["Cc"] = cc
                 message["In-Reply-To"] = reference
                 message.set_content(answer)
-                quality_mail.publish_reply(main.database, message.as_bytes())
+                quality_mail.draft_reply(main.database, message.as_bytes())
 
-            receive(outgoing["Cc"], outgoing["Message-ID"], "Без подтверждения")
-            receive(outgoing["To"], "<another-ticket@demo.invalid>", "Другое обращение")
+            receive(copy["To"], outgoing["Message-ID"], "Ответ сотрудника")
+            receive(outgoing["To"], copy["Message-ID"], "Ответ на уведомление")
+            self.assertIsNone(main.ticket_detail("Q-0001")["qa_entry"])
+            receive(outgoing["To"], outgoing["Message-ID"], "Пять рабочих дней.")
+            receive(outgoing["To"], outgoing["Message-ID"], "Повторное письмо")
+            ticket = main.ticket_detail("Q-0001")
+            self.assertEqual(ticket["status"], "answered")
+            draft = ticket["qa_entry"]
+            self.assertEqual((draft["status"], draft["answer"]), ("draft", "Пять рабочих дней."))
+            self.assertIsNone(draft["confirmed_by"])
+            self.assertIsNone(main.my_tickets(employee)[0]["answer"])
             self.assertEqual(main.published_answers(employee), [])
-            receive(outgoing["To"], outgoing["Message-ID"], "Пять рабочих дней.", cc=outgoing["Cc"])
-            receive(outgoing["To"], outgoing["Message-ID"], "Дубликат")
-            [entry] = main.published_answers(employee)
-            self.assertEqual(entry["answer"], "Пять рабочих дней.")
-            self.assertEqual(entry["confirmed_by"], "quality-mail")
+            self.assertEqual(main.session_messages(session, employee)["messages"], [])
+            with patch.object(quality_mail, "send") as send:
+                quality_mail.deliver_next_reply(main.database)
+            send.assert_not_called()
+
+            with patch.dict(os.environ, {"PUNKT_TEST_MAIL": "1"}):
+                entry = main.confirm_answer(draft["qa_entry_id"], main.USERS["quality"])
+            self.assertEqual((entry["status"], entry["confirmed_by"]), ("confirmed", "quality"))
             self.assertEqual(main.ticket_detail(entry["ticket_id"])["status"], "published")
             [reply] = main.session_messages(session, employee)["messages"]
             self.assertEqual((reply["role"], reply["content"], reply["ticket_id"]),
@@ -154,6 +179,47 @@ class QualityMailTests(unittest.TestCase):
             message = send.call_args.args[0]
             self.assertEqual(str(message["To"]), "employee@demo.invalid")
             self.assertEqual(message.get_content().strip(), entry["answer"])
+
+    def test_upgrade_returns_legacy_mail_confirmation_to_review(self):
+        with tempfile.TemporaryDirectory() as folder, patch.dict(
+            os.environ, {"KESHAKING_DB_PATH": str(Path(folder) / "punkt.sqlite3"), "PUNKT_TEST_MAIL": "0"}
+        ):
+            async def initialize():
+                async with main.lifespan(main.app):
+                    pass
+
+            asyncio.run(initialize())
+            employee = main.USERS["employee"]
+            session = main.create_session(employee)["session_id"]
+            with patch.dict(os.environ, {"PUNKT_TEST_MAIL": "1"}), main.database() as db:
+                legacy = main.create_ticket(db, employee["user_id"], session, "Какой срок?", "Нет ответа.")
+                verified = main.create_ticket(db, employee["user_id"], session, "Кто отвечает?", "Нет ответа.")
+            legacy_entry = main.save_ticket_answer(legacy["ticket_id"], main.TicketAnswer(answer="Требует проверки."))
+            verified_entry = main.save_ticket_answer(verified["ticket_id"], main.TicketAnswer(answer="Проверенный ответ."))
+            with main.database() as db:
+                db.execute("DROP TABLE quality_mail_copy")
+                db.execute("ALTER TABLE quality_mail DROP COLUMN reply_token")
+                db.execute("UPDATE quality_mail SET sent_at = unixepoch()")
+                db.execute("UPDATE tickets SET status = 'published'")
+                db.execute("UPDATE qa_entries SET status = 'confirmed', confirmed_by = 'quality'")
+                db.execute("UPDATE qa_entries SET confirmed_by = 'quality-mail' WHERE qa_entry_id = ?",
+                           (legacy_entry["qa_entry_id"],))
+                db.execute("INSERT INTO quality_reply_mail (ticket_seq) SELECT seq FROM tickets")
+
+            asyncio.run(initialize())
+            asyncio.run(initialize())
+            self.assertEqual(main.ticket_detail(legacy["ticket_id"])["status"], "answered")
+            self.assertEqual(main.ticket_detail(legacy["ticket_id"])["qa_entry"]["answer"], "Требует проверки.")
+            self.assertEqual([entry["qa_entry_id"] for entry in main.published_answers(employee)],
+                             [verified_entry["qa_entry_id"]])
+            with main.database() as db:
+                [legacy_mail, verified_mail] = db.execute(
+                    "SELECT sent_at, reply_token FROM quality_mail ORDER BY ticket_seq"
+                ).fetchall()
+                self.assertIsNone(legacy_mail["sent_at"])
+                self.assertEqual(len(legacy_mail["reply_token"]), 64)
+                self.assertIsNotNone(verified_mail["sent_at"])
+                self.assertEqual(db.execute("SELECT count(*) FROM quality_reply_mail").fetchone()[0], 1)
 
     def test_web_answer_is_visible_after_confirmation_and_email_retries(self):
         with tempfile.TemporaryDirectory() as folder, patch.dict(

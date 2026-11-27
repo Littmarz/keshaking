@@ -22,6 +22,7 @@ import argparse
 import datetime as dt
 import importlib
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -207,7 +208,11 @@ class _Api:
             return json.loads(resp.read().decode("utf-8") or "null")
 
     def login(self, user_id: str) -> str:
-        return self.call("POST", "/auth/login", {"user_id": user_id})["token"]
+        variable = f"PUNKT_{user_id.upper()}_PASSWORD"
+        password = os.environ.get(variable)
+        if not password:
+            sys.exit(f"Перед прогоном API задайте {variable}.")
+        return self.call("POST", "/auth/login", {"user_id": user_id, "password": password})["token"]
 
 
 def run_api(cases: list[dict], k: int, base: str = "http://127.0.0.1:8000", timeout: float = 180) -> tuple[list[dict], dict]:

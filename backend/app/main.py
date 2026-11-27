@@ -27,7 +27,7 @@ from app.agent import (
 )
 from app.mocks.fake_agent import run_mock
 from app.mocks.knowledge import normalized_question
-from app.quality_mail import deliver_mail, employee_address, queue_confirmed_reply, receive_replies, send_demo_reply
+from app.quality_mail import deliver_mail, mailpit_password, queue_confirmed_reply, receive_replies, send_demo_reply
 
 
 USERS = {
@@ -46,7 +46,7 @@ def account_password(user_id: str) -> str:
 
 def validate_account_passwords():
     employee, quality = (account_password(user_id) for user_id in USERS)
-    if (employee or quality) and (not employee or not quality or employee == quality):
+    if not employee.strip() or not quality.strip() or employee == quality:
         raise RuntimeError("Set distinct passwords for both Punkt demo accounts.")
 
 
@@ -60,9 +60,38 @@ def database():
         yield connection
 
 
+def migrate_quality_mail(connection):
+    connection.execute("BEGIN IMMEDIATE")
+    if "reply_token" not in {column["name"] for column in connection.execute("PRAGMA table_info(quality_mail)")}:
+        connection.execute("ALTER TABLE quality_mail ADD COLUMN reply_token TEXT")
+        connection.execute(
+            """INSERT INTO quality_mail_copy (ticket_seq, sent_at)
+               SELECT ticket_seq, sent_at FROM quality_mail"""
+        )
+
+    # Older installations trusted the From header to publish. Keep those answers for manual review.
+    mail_confirmations = "SELECT ticket_seq FROM qa_entries WHERE confirmed_by = 'quality-mail'"
+    connection.execute(f"DELETE FROM quality_reply_mail WHERE ticket_seq IN ({mail_confirmations})")
+    connection.execute(f"UPDATE tickets SET status = 'answered' WHERE seq IN ({mail_confirmations})")
+    connection.execute(
+        """UPDATE qa_entries SET status = 'draft', confirmed_by = NULL, confirmed_at = NULL
+           WHERE confirmed_by = 'quality-mail'"""
+    )
+    old_threads = connection.execute(
+        """SELECT m.ticket_seq FROM quality_mail AS m JOIN tickets AS t ON t.seq = m.ticket_seq
+           WHERE m.reply_token IS NULL AND t.status IN ('open', 'answered')"""
+    ).fetchall()
+    connection.executemany(
+        "UPDATE quality_mail SET reply_token = ?, sent_at = NULL, retry_at = 0 WHERE ticket_seq = ?",
+        ((secrets.token_hex(32), row["ticket_seq"]) for row in old_threads),
+    )
+
+
 @asynccontextmanager
 async def lifespan(_app):
     validate_account_passwords()
+    if test_mail_enabled() and mailpit_password() in {account_password(user_id) for user_id in USERS}:
+        raise RuntimeError("Set a separate password for Mailpit.")
     if os.environ.get("AGENT_MODE", "mock") not in ("mock", "real"):
         raise RuntimeError("AGENT_MODE must be mock or real.")
     with database() as connection:
@@ -90,6 +119,12 @@ async def lifespan(_app):
             );
             CREATE TABLE IF NOT EXISTS quality_mail (
                 ticket_seq INTEGER PRIMARY KEY REFERENCES tickets(seq),
+                reply_token TEXT,
+                retry_at INTEGER NOT NULL DEFAULT 0,
+                sent_at INTEGER
+            );
+            CREATE TABLE IF NOT EXISTS quality_mail_copy (
+                ticket_seq INTEGER PRIMARY KEY REFERENCES tickets(seq),
                 retry_at INTEGER NOT NULL DEFAULT 0,
                 sent_at INTEGER
             );
@@ -99,6 +134,7 @@ async def lifespan(_app):
                 sent_at INTEGER
             );
         """)
+        migrate_quality_mail(connection)
     mail_worker = asyncio.create_task(deliver_mail(database)) if test_mail_enabled() else None
     try:
         yield
@@ -197,7 +233,7 @@ def readiness():
 
 @app.get("/auth/users")
 def users():
-    return [{**user, "password_required": bool(account_password(user_id))} for user_id, user in USERS.items()]
+    return [{**user, "password_required": True} for user in USERS.values()]
 
 
 @app.post("/auth/login")
@@ -206,7 +242,7 @@ def login(payload: LoginRequest):
     if user is None:
         raise HTTPException(404, "Тестовый аккаунт не найден.")
     password = account_password(payload.user_id)
-    if password and not secrets.compare_digest(password.encode(), payload.password.encode()):
+    if not password.strip() or not secrets.compare_digest(password.encode(), payload.password.encode()):
         raise HTTPException(401, "Неверный пароль.")
     now = monotonic()
     for key, (_, expiry) in tokens.copy().items():
@@ -311,8 +347,13 @@ def create_ticket(connection, user_id, session_id, question, reason, *, conflict
     created = cursor.rowcount == 1
     if test_mail_enabled():
         connection.execute(
-            """INSERT OR IGNORE INTO quality_mail (ticket_seq)
-               SELECT seq FROM tickets WHERE seq = ? AND status IN ('open', 'answered')""",
+            """INSERT OR IGNORE INTO quality_mail (ticket_seq, reply_token)
+               SELECT seq, ? FROM tickets WHERE seq = ? AND status IN ('open', 'answered')""",
+            (secrets.token_hex(32), seq),
+        )
+        connection.execute(
+            """INSERT OR IGNORE INTO quality_mail_copy (ticket_seq)
+               SELECT ticket_seq FROM quality_mail WHERE ticket_seq = ?""",
             (seq,),
         )
     message = f"Обращение {ticket_id} {'создано' if created else 'уже существует'} в очереди службы качества."
@@ -320,7 +361,7 @@ def create_ticket(connection, user_id, session_id, question, reason, *, conflict
         mail = connection.execute("SELECT sent_at FROM quality_mail WHERE ticket_seq = ?", (seq,)).fetchone()
         if mail is not None:
             delivery = "отправлено" if mail["sent_at"] is not None else "поставлено в очередь на отправку"
-            message += f" Письмо {delivery}, {employee_address(user_id)} в копии."
+            message += f" Письмо службе качества {delivery}. Сотрудник получит отдельное уведомление."
     return {"ticket_id": ticket_id, "created": created, "message": message}
 
 
@@ -490,35 +531,31 @@ def save_ticket_answer(ticket_id: str, payload: TicketAnswer):
 
 
 @app.post("/tickets/{ticket_id}/test-mail-reply", dependencies=[Depends(require_quality)])
-def test_mail_reply(ticket_id: str):
+def test_mail_reply(ticket_id: str, payload: TicketAnswer):
     if not test_mail_enabled():
         raise HTTPException(404, "Тестовая почта выключена.")
 
     with database() as connection:
         ticket = ticket_row(connection, ticket_id)
-        entries = knowledge_entries(connection, ticket_seq=ticket["seq"])
-        if not entries or ticket["status"] == "rejected":
-            raise HTTPException(409, "Сохраните черновик ответа для этого обращения.")
-        entry = entries[0]
-        if entry["status"] == "confirmed":
-            return entry
+        if ticket["status"] != "open":
+            raise HTTPException(409, "По обращению уже есть черновик или опубликованный ответ.")
         mail = connection.execute(
-            "SELECT sent_at FROM quality_mail WHERE ticket_seq = ?", (ticket["seq"],),
+            "SELECT sent_at, reply_token FROM quality_mail WHERE ticket_seq = ?", (ticket["seq"],),
         ).fetchone()
-    if mail is None or mail["sent_at"] is None:
+    if mail is None or mail["sent_at"] is None or mail["reply_token"] is None:
         raise HTTPException(409, "Письмо по обращению ещё отправляется. Попробуйте ещё раз через несколько секунд.")
 
     try:
-        send_demo_reply(ticket, entry["answer"])
+        send_demo_reply(ticket["seq"], mail["reply_token"], payload.answer)
         receive_replies(database, set())
     except (OSError, ValueError, KeyError) as exc:
-        raise HTTPException(503, "Тестовая почта временно недоступна. Проверьте обращение перед повторной отправкой.") from exc
+        raise HTTPException(503, "Тестовая почта временно недоступна. Обновите обращение перед повторной отправкой.") from exc
 
     with database() as connection:
-        entry = knowledge_entries(connection, ticket_seq=ticket["seq"])[0]
-    if entry["status"] != "confirmed":
-        raise HTTPException(503, "Ответ ушёл в тестовую почту. Обновите обращение, чтобы увидеть результат обработки.")
-    return entry
+        entries = knowledge_entries(connection, ticket_seq=ticket["seq"], status="draft")
+    if not entries:
+        raise HTTPException(409, "Обновите обращение, чтобы увидеть результат обработки письма.")
+    return entries[0]
 
 
 @app.post("/qa/{entry_id}/confirm", dependencies=[Depends(require_quality)])

@@ -22,7 +22,12 @@ class ReadinessTests(unittest.TestCase):
             ("real", "documents", True, True, 200),
         ]
         with tempfile.TemporaryDirectory() as folder, patch.dict(
-            os.environ, {"KESHAKING_DB_PATH": str(Path(folder) / "punkt.sqlite3"), "PUNKT_TEST_MAIL": "0"}
+            os.environ, {
+                "KESHAKING_DB_PATH": str(Path(folder) / "punkt.sqlite3"),
+                "PUNKT_TEST_MAIL": "0",
+                "PUNKT_EMPLOYEE_PASSWORD": "staff-test-secret",
+                "PUNKT_QUALITY_PASSWORD": "quality-test-secret",
+            }
         ):
             async def initialize():
                 async with main.lifespan(main.app):

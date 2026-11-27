@@ -16,8 +16,9 @@ services:
       KESHAKING_DB_PATH: /var/lib/punkt/mock.sqlite3
       PUNKT_WEB_DIR: /opt/punkt/web
       PUNKT_TEST_MAIL: ${PUNKT_TEST_MAIL:-0}
-      PUNKT_EMPLOYEE_PASSWORD: ${PUNKT_EMPLOYEE_PASSWORD:-}
-      PUNKT_QUALITY_PASSWORD: ${PUNKT_QUALITY_PASSWORD:-}
+      PUNKT_EMPLOYEE_PASSWORD: ${PUNKT_EMPLOYEE_PASSWORD:?Set PUNKT_EMPLOYEE_PASSWORD}
+      PUNKT_QUALITY_PASSWORD: ${PUNKT_QUALITY_PASSWORD:?Set PUNKT_QUALITY_PASSWORD}
+      PUNKT_MAIL_PASSWORD: ${PUNKT_MAIL_PASSWORD:-}
     ports:
       - "127.0.0.1:${PUNKT_PORT:-8080}:8080"
     volumes:
@@ -34,7 +35,24 @@ services:
   mailpit:
     image: axllent/mailpit:v1.27.4
     profiles: [quality-mail]
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        case "$$PUNKT_MAIL_PASSWORD" in
+          ''|*[!A-Za-z0-9_-]*)
+            echo "Set PUNKT_MAIL_PASSWORD using letters, digits, hyphens or underscores." >&2
+            exit 1
+            ;;
+        esac
+        umask 077
+        printf 'punkt:%s\n' "$$PUNKT_MAIL_PASSWORD" > /tmp/mailpit-auth
+        exec /mailpit
     environment:
+      PUNKT_MAIL_PASSWORD: ${PUNKT_MAIL_PASSWORD:-}
+      MP_UI_AUTH_FILE: /tmp/mailpit-auth
+      MP_SEND_API_AUTH_FILE: /tmp/mailpit-auth
+      MP_SMTP_AUTH_FILE: /tmp/mailpit-auth
+      MP_SMTP_AUTH_ALLOW_INSECURE: "true"
       MP_DATABASE: /data/mailpit.db
       MP_DISABLE_VERSION_CHECK: "true"
     ports:

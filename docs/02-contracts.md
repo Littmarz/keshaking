@@ -183,7 +183,7 @@
 |---|---|---|---|
 | GET | `/health` | — | `{db, search, llm: "ok"/"down"}` |
 | GET | `/auth/users` | — | мок-пользователи (сотрудники и сотрудник качества) |
-| POST | `/auth/login` | `{user_id}` | `{token, user}` |
+| POST | `/auth/login` | `{user_id, password}` | `{token, user}` |
 | GET | `/auth/me` | Bearer | user |
 | POST | `/chat/sessions` | — | `{session_id}` |
 | GET | `/chat/sessions` · `/chat/sessions/{id}` | — | сессии / сообщения |
