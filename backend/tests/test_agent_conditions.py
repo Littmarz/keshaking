@@ -6,12 +6,16 @@ from unittest.mock import patch
 
 from app.agent import (
     AgentError,
+    closure_deadline_answer,
+    closure_deadline_sources,
     conflicting_reply_deadlines,
+    direct_prohibition,
     following_recovery_step,
     model_sources,
     numeric_checks,
     run_agent,
     same_quality_question,
+    search_documents,
     shared_rule,
     workday_answer,
 )
@@ -148,6 +152,94 @@ class QualityRoutingTests(unittest.TestCase):
 
 
 class DialogTests(unittest.TestCase):
+    def test_permission_search_recovers_a_short_rule_for_an_abbreviated_role(self):
+        long_clause = Chunk(
+            "doc::2.1", "doc", "Регламент", "2.1",
+            "Руководитель проекта ведёт план проекта и назначает исполнителей. "
+            "Администратор проекта помогает готовить и хранить отчётность. Итоги отчётного "
+            "периода вносятся в систему и передаются заинтересованным сотрудникам.",
+        )
+        short_clause = Chunk(
+            "doc::2.6", "doc", "Регламент", "2.6",
+            "Администратора проекта назначают только на проекты, не требующие управления рисками. "
+            "В остальных случаях назначают руководителя проекта.",
+        )
+        other_hits = [
+            Hit(Chunk(f"doc::{i}.1", "doc", "Регламент", f"{i}.1",
+                      "Ведёт карточку проекта и формирует отчётность."), 0.6)
+            for i in range(3, 7)
+        ]
+        result = SearchResult(hits=[Hit(long_clause, 0.8), *other_hits, Hit(short_clause, 0.4)], scope=["ИБ"])
+        with patch("app.agent.document_corpus_available", return_value=True), patch(
+            "retrieval.mock.search", return_value=result
+        ), patch("retrieval.mock.get_section", return_value=None):
+            _, chunks = search_documents("Можно назначить АП вместо руководителя проекта в ИБ?", [])
+
+        self.assertEqual(chunks[0], short_clause)
+
+    def test_closure_deadlines_keep_the_two_applicable_regulation_clauses(self):
+        first = Chunk(
+            "workflow::2.1", "workflow", "Порядок работы", "2.1",
+            "Заявку в статусе «Ожидает сведения» закрывают, если она не обновлялась более 3 "
+            "рабочих дней. Устанавливается статус «Дисквалифицировано».",
+        )
+        related = Chunk(
+            "workflow::5.3", "workflow", "Порядок работы", "5.3",
+            "Заявки другого подразделения сразу закрывают со статусом «Дисквалифицировано». "
+            "Специалист устанавливает статус заявки в «Ожидает сведения». Если данные "
+            "не поступили в течение 3 рабочих дней с момента создания заявки, "
+            "специалист закрывает её со статусом «Дисквалифицировано».",
+        )
+        other_outcome = Chunk(
+            "workflow::5.4", "workflow", "Порядок работы", "5.4",
+            related.text.replace("Дисквалифицировано", "Выполнено"),
+        )
+        other_document = Chunk("other::5.3", "other", "Другой порядок", "5.3", related.text)
+        chunks = [first, other_outcome, other_document, related]
+
+        self.assertEqual(closure_deadline_sources("Через сколько её закроют?", chunks), [first, related])
+        self.assertEqual(closure_deadline_sources("Кто закроет заявку?", chunks), [])
+        answer = closure_deadline_answer([first, related])
+        self.assertIn("не обновлялась более 3 рабочих дней", answer)
+        self.assertIn("в течение 3 рабочих дней с момента создания заявки", answer)
+        self.assertNotIn("другого подразделения", answer)
+
+    def test_direct_prohibition_uses_the_matching_rule_and_defers_competing_rules(self):
+        question = "Можно дать подрядчику доступ к порталу проекта ИБ?"
+        unrelated = {"quote": "Координатор размещает подписанные документы на портале проекта."}
+        rule = {"quote": "4.3. Запрещается предоставлять подрядчику доступ к порталу проекта."}
+        alternative = {"quote": "4.4. Подрядчику разрешается предоставлять доступ к порталу проекта."}
+
+        self.assertEqual(
+            direct_prohibition(question, [unrelated, rule]),
+            ("Запрещается предоставлять подрядчику доступ к порталу проекта.", [2]),
+        )
+        self.assertIsNone(direct_prohibition(question, [unrelated, rule, alternative]))
+        self.assertIsNone(direct_prohibition(question + " Если он приглашён координатором?", [rule]))
+
+    def test_permission_answer_preserves_every_exception_from_the_cited_rule(self):
+        rule = Chunk(
+            "doc::1.2", "doc", "Регламент", "1.2",
+            "1.2. Координатору запрещается отправлять отчёт без согласования, "
+            "кроме предварительного просмотра и учебных проектов.",
+        )
+        related = Chunk(
+            "doc::2.1", "doc", "Регламент", "2.1",
+            "2.1. Координатор регистрирует отправленные отчёты.",
+        )
+        decision = {"scope": "company_process", "status": "answered",
+                    "text": "Исключение — учебные проекты.", "source_ids": [1, 2]}
+        response = {"message": {"content": json.dumps(decision)}}
+        with patch.dict(os.environ, {"AGENT_SOURCES": "documents"}), patch(
+            "app.agent.search_documents", return_value=(SearchResult(hits=[], scope=["ИБ"]), [rule, related])
+        ), patch("app.agent.direct_prohibition", return_value=None), patch(
+            "app.agent.urlopen", return_value=io.BytesIO(json.dumps(response).encode())
+        ):
+            answer = run_agent("Может ли координатор отправлять отчёты без согласования в ИБ?", [])
+
+        self.assertIn("кроме предварительного просмотра и учебных проектов", answer["answer"])
+        self.assertEqual([source["chunk_id"] for source in answer["citations"]], [rule.chunk_id])
+
     def test_model_receives_original_question_and_all_clarifications(self):
         history = [
             {"role": "user", "content": "Сколько дней дают на расчёт?", "status": None},
