@@ -1,6 +1,10 @@
+import io
+import json
+import os
 import unittest
+from unittest.mock import patch
 
-from app.agent import model_sources, numeric_checks, workday_answer
+from app.agent import model_sources, numeric_checks, run_agent, workday_answer
 
 
 class NumericCheckTests(unittest.TestCase):
@@ -45,6 +49,45 @@ class NumericCheckTests(unittest.TestCase):
             workday_answer("Ответа нет 6 календарных дней.", source, []),
             ("Сколько прошло рабочих дней? Регламент устанавливает срок в рабочих днях.", True),
         )
+
+
+class QualityRoutingTests(unittest.TestCase):
+    def test_missing_company_rule_is_sent_to_quality(self):
+        question = "Сколько дней даётся на согласование ТКП с юристами?"
+        history = [
+            {"role": "user", "content": "ДБРЦТ, пресейл, нет анкеты", "status": None},
+            {"role": "assistant", "content": "Заявка ждёт анкету.", "status": "answered"},
+        ]
+        decision = {
+            "scope": "company_process",
+            "status": "no_answer",
+            "text": "В источниках нет срока согласования.",
+            "source_ids": [],
+        }
+        response = {"message": {"content": json.dumps(decision)}}
+        with patch.dict(os.environ, {"AGENT_SOURCES": "demo"}), patch(
+            "app.agent.urlopen", return_value=io.BytesIO(json.dumps(response).encode())
+        ):
+            result = run_agent(question, history)
+
+        self.assertEqual(result["status"], "escalated")
+        self.assertEqual(result["reason"], decision["text"])
+
+    def test_personal_bonus_question_is_refused(self):
+        decision = {
+            "scope": "out_of_scope",
+            "status": "no_answer",
+            "text": "Не могу ответить на вопрос о премии.",
+            "source_ids": [],
+        }
+        response = {"message": {"content": json.dumps(decision)}}
+        with patch.dict(os.environ, {"AGENT_SOURCES": "demo"}), patch(
+            "app.agent.urlopen", return_value=io.BytesIO(json.dumps(response).encode())
+        ):
+            result = run_agent("Какая у меня будет премия за сделку?", [])
+
+        self.assertEqual(result["status"], "refused")
+        self.assertIn("руководителю", result["answer"])
 
 
 if __name__ == "__main__":
