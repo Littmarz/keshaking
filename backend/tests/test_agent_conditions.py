@@ -3,9 +3,13 @@ import json
 import os
 import unittest
 from unittest.mock import patch
+from urllib.error import HTTPError, URLError
 
 from app.agent import (
     AgentError,
+    CLARIFICATION_LIMIT_PROMPT,
+    Decision,
+    ask_model,
     closure_deadline_answer,
     closure_deadline_sources,
     conflicting_reply_deadlines,
@@ -92,6 +96,35 @@ class QualityRoutingTests(unittest.TestCase):
         self.assertIn(chunk.text, result["answer"])
         self.assertNotIn(entry["answer"], result["answer"])
 
+    def test_oversized_mixed_conflict_only_returns_a_verified_pair(self):
+        question = "Кто проверяет заявку в Техдирекции?"
+        unrelated = Chunk("tech::1.1", "tech", "Техническая дирекция", "1.1", "Заявку хранит секретарь.")
+        rule = Chunk("tech::1.2", "tech", "Техническая дирекция", "1.2", "Заявку проверяет координатор.")
+        entry = {
+            "qa_entry_id": "qa-demo", "ticket_id": "Q-0001", "question": question,
+            "answer": "Заявку проверяет автор.", "doc_id": "tech", "section": "1.2",
+            "directorate": None, "stage": None, "status": "confirmed",
+        }
+        initial = Decision(scope="company_process", status="conflict", text="Расхождение.", source_ids=[3, 1, 2])
+        for selected, expected in (([3, 1], "conflict"), ([3, 2], "escalated"), ([3, 99], "escalated")):
+            verification = Decision(scope="company_process", status="conflict", text="Проверка.", source_ids=selected)
+            with self.subTest(selected=selected), patch.dict(os.environ, {"AGENT_SOURCES": "documents"}), patch(
+                "app.agent.search_documents", return_value=(SearchResult(hits=[]), [unrelated, rule])
+            ), patch("app.agent.ask_model", side_effect=[(initial, {}), (verification, {})]) as model:
+                result = run_agent(question, [], [entry])
+
+            candidates = model.call_args.args[1]["sources"]
+            self.assertEqual([source["quote"] for source in candidates], [entry["answer"], unrelated.text, rule.text])
+            self.assertEqual(result["status"], expected)
+            self.assertEqual(result["metrics"]["llm_calls"], 2)
+            self.assertNotIn(unrelated.text, result["answer"])
+            self.assertNotIn(entry["answer"], result["answer"])
+            if expected == "conflict":
+                self.assertIn(rule.text, result["answer"])
+                self.assertEqual([source["chunk_id"] for source in result["citations"]], [rule.chunk_id, "qa::qa-demo"])
+            else:
+                self.assertEqual(result["citations"], [])
+
     def test_missing_company_rule_is_sent_to_quality(self):
         question = "Сколько дней даётся на согласование ТКП с юристами?"
         history = [
@@ -149,6 +182,98 @@ class QualityRoutingTests(unittest.TestCase):
                 "app.agent.search_documents", return_value=(SearchResult(hits=[]), [])
             ), patch("app.agent.urlopen", return_value=io.BytesIO(raw)):
                 self.assertEqual(run_agent(question, [])["status"], expected)
+
+
+class ClarificationLimitTests(unittest.TestCase):
+    question = "Кто проверяет заявку?"
+    prompt = "К какой дирекции относится заявка?"
+    chunks = [
+        Chunk("tech::1.2", "tech", "Техническая дирекция", "1.2",
+              "Заявку проверяет координатор.", directorate="Техдирекция"),
+        Chunk("dbrct::1.3", "dbrct", "ДБРЦТ", "1.3",
+              "Заявку проверяет архитектор.", directorate="ДБРЦТ"),
+    ]
+
+    def setUp(self):
+        search = SearchResult(hits=[], ambiguous_scope=True, scope_options=[
+            {"directorate": "Техдирекция", "label": "Техдирекция, проекты"},
+            {"directorate": "ДБРЦТ", "label": "ДБРЦТ, пресейл"},
+        ])
+        self.enterContext(patch.dict(os.environ, {"AGENT_SOURCES": "documents"}))
+        self.retrieval = self.enterContext(patch("app.agent.search_documents", return_value=(search, self.chunks)))
+        self.model = self.enterContext(patch("app.agent.ask_model"))
+
+    def history(self, *questions):
+        return [message for question in questions for message in (
+            {"role": "user", "content": question},
+            {"role": "assistant", "content": self.prompt, "status": "needs_clarification"},
+        )]
+
+    def test_scope_question_has_options(self):
+        self.model.return_value = (Decision(scope="company_process", status="needs_clarification",
+                                            text=self.prompt, source_ids=[]), {})
+        result = run_agent(self.question, [])
+        self.assertEqual(result["status"], "needs_clarification")
+        self.assertEqual(result["clarification"]["options"], ["Техдирекция, проекты", "ДБРЦТ, пресейл", "Не знаю"])
+
+    def test_unknown_scope_shows_cited_variants_and_escalates(self):
+        self.model.return_value = (Decision(scope="company_process", status="partial",
+                                            text="Для всех заявок применяется одно правило.", source_ids=[1, 2]), {})
+        result = run_agent("Не знаю!", self.history(self.question))
+        self.retrieval.assert_called_once_with(self.question, [], include_scope_variants=True)
+        self.assertTrue(self.model.call_args.args[1]["clarification_limit"])
+        self.assertEqual(result["status"], "escalated")
+        self.assertIsNone(result["clarification"])
+        self.assertEqual([source["chunk_id"] for source in result["citations"]], [chunk.chunk_id for chunk in self.chunks])
+        self.assertIn("Техдирекция — Заявку проверяет координатор. [1]", result["answer"])
+        self.assertIn("ДБРЦТ — Заявку проверяет архитектор. [2]", result["answer"])
+        self.assertNotIn("одно правило", result["answer"])
+
+    def test_unknown_scope_is_not_refused(self):
+        self.model.return_value = (Decision(scope="out_of_scope", status="no_answer",
+                                            text="Обратитесь к руководителю.", source_ids=[]), {})
+        result = run_agent("Не знаю", self.history(self.question))
+        self.assertEqual(result["status"], "escalated")
+        self.assertNotIn("руководителю", result["answer"])
+
+    def test_two_unresolved_rounds_end_clarification(self):
+        self.model.return_value = (Decision(scope="company_process", status="needs_clarification",
+                                            text=self.prompt, source_ids=[]), {})
+        result = run_agent("Уточню позже", self.history(self.question, "Проектная заявка"))
+        self.assertEqual(result["status"], "escalated")
+        self.assertIsNone(result["clarification"])
+        self.assertNotIn(self.prompt, result["answer"])
+
+
+class ModelTransportTests(unittest.TestCase):
+    def test_exhausted_clarification_uses_its_own_prompt(self):
+        decision = {"scope": "company_process", "status": "partial", "text": "Варианты.", "source_ids": [1]}
+        payload = {"message": {"content": json.dumps(decision)}}
+        with patch("app.agent.urlopen", return_value=io.BytesIO(json.dumps(payload).encode())) as call:
+            ask_model("qwen3:8b", {"clarification_limit": True})
+        request = json.loads(call.call_args.args[0].data)
+        self.assertEqual(request["messages"][0]["content"], CLARIFICATION_LIMIT_PROMPT)
+
+    def test_invalid_timeout_does_not_call_model(self):
+        for value in ("0", "-1", "nan", "inf", "invalid"):
+            with self.subTest(value=value), patch.dict(os.environ, {"AGENT_TIMEOUT_S": value}), patch("app.agent.urlopen") as call:
+                with self.assertRaisesRegex(AgentError, "AGENT_TIMEOUT_S"):
+                    ask_model("qwen3:8b", {})
+                call.assert_not_called()
+
+    def test_configured_timeout_and_distinct_errors(self):
+        cases = (
+            (TimeoutError(), "не успела ответить"),
+            (URLError(TimeoutError()), "не успела ответить"),
+            (HTTPError("http://localhost", 503, "overloaded", {}, None), "перегружена"),
+        )
+        for failure, expected in cases:
+            with self.subTest(failure=failure), patch.dict(os.environ, {"AGENT_TIMEOUT_S": "7.5"}), patch(
+                "app.agent.urlopen", side_effect=failure
+            ) as call:
+                with self.assertRaisesRegex(AgentError, expected):
+                    ask_model("qwen3:8b", {})
+                self.assertEqual(call.call_args.kwargs["timeout"], 7.5)
 
 
 class DialogTests(unittest.TestCase):

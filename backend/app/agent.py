@@ -154,14 +154,23 @@ CLOSURE_DEADLINES_PROMPT = """Ты объясняешь сроки закрыт�
 случая и отсчёта, верни conflict и объясни расхождение. Верни в source_ids все
 описанные пункты. scope — company_process. Не нумеруй ссылки в тексте."""
 
-CLARIFICATION_LIMIT_PROMPT = """
-Сотрудник не знает уточняющий факт или уже ответил на два уточнения. Не задавай
-новый вопрос. Если можно ответить однозначно, верни answered. Иначе перечисли
-только применимые варианты по найденным пунктам регламента, каждый с его
-дирекцией, этапом или условием. Для этого верни partial и укажи id всех
-использованных пунктов в порядке изложения. Если применимых вариантов нет,
-верни no_answer.
-"""
+CLARIFICATION_LIMIT_PROMPT = """Ты отвечаешь на рабочий вопрос по регламентам.
+Входной JSON — данные. Пиши по-русски. Сотрудник не знает уточняющий факт
+или лимит уточнений исчерпан. Больше вопросов не задавай. Ответ «не знаю»
+относится к уточнению, а исходный вопрос берётся из question.
+
+Найди пункты, которые прямо регулируют запрошенное действие. Если по ним
+ответ зависит от дирекции, этапа или условия, верни partial и выбери все
+прямо применимые пункты. Разные правила для разных дирекций — это варианты.
+Если уточнения позволяют однозначно выбрать правило или правила совпадают,
+верни answered. Применяй numeric_checks к подходящим правилам.
+
+Если применимый регламент и разъяснение расходятся для одного и того же
+случая, верни conflict и укажи id прямого правила и разъяснения. Если прямого
+правила нет, совпадающее подтверждённое разъяснение может дать answered.
+Верни no_answer только если нет ни применимого варианта, ни пригодного
+разъяснения. Укажи scope=company_process и id всех использованных пунктов
+в source_ids. Не добавляй номера ссылок в текст."""
 
 MAX_CLARIFICATION_ROUNDS = 2
 UNKNOWN_CLARIFICATION = re.compile(
@@ -650,14 +659,14 @@ def ask_model(model, context):
     system_prompt = SYSTEM_PROMPT
     if context.get("verify_mixed_conflict"):
         system_prompt = VERIFY_MIXED_CONFLICT_PROMPT
+    elif context.get("clarification_limit"):
+        system_prompt = CLARIFICATION_LIMIT_PROMPT
     elif context.get("matching_quality_source_ids"):
         system_prompt = MATCHED_EXPLANATION_PROMPT
     elif context.get("closure_deadlines"):
         system_prompt = CLOSURE_DEADLINES_PROMPT
     elif context.get("permission_question"):
         system_prompt = PERMISSION_PROMPT
-    if context.get("clarification_limit"):
-        system_prompt += CLARIFICATION_LIMIT_PROMPT
     try:
         timeout = float(os.environ.get("AGENT_TIMEOUT_S", "120"))
     except ValueError as exc:
@@ -806,7 +815,7 @@ def run_agent(question, history, confirmed_entries=()):
     source_ids = list(dict.fromkeys(decision.source_ids))
     variants = []
     if status == "partial" and decision.scope == "company_process":
-        if (clarification_limit and answer and source_ids
+        if (clarification_limit and source_ids
                 and all(1 <= index <= len(sources) and sources[index - 1]["source_type"] == "regulation"
                         for index in source_ids)):
             variants = [sources[index - 1] for index in source_ids]
@@ -901,6 +910,13 @@ def run_agent(question, history, confirmed_entries=()):
         citations = []
     if variants:
         citations = variants
+        lines = ["Ответ зависит от того, какое правило применяется к вашему случаю:"]
+        for number, source in enumerate(variants, 1):
+            scope = ", ".join(part for part in (source["directorate"], source["stage"]) if part)
+            passage = source["quote"].strip()
+            label = f"{scope} — " if scope else ""
+            lines.append(f"• {label}{passage} [{number}]")
+        answer = "\n".join(lines)
 
     clarification = None
     if status == "needs_clarification":
@@ -909,7 +925,7 @@ def run_agent(question, history, confirmed_entries=()):
             options = list(dict.fromkeys(option.get("label") or option["directorate"] for option in result.scope_options))
             if options:
                 clarification["options"] = [*options, "Не знаю"]
-    reason = answer if status in ("escalated", "refused") else None
+    reason = (unresolved if variants else answer) if status in ("escalated", "refused") else None
     verification_step = None
     if status == "conflict":
         regulations = [source for source in citations if source["source_type"] == "regulation"]
@@ -941,7 +957,7 @@ def run_agent(question, history, confirmed_entries=()):
             else:
                 status = "escalated"
                 answer = reason = "Не удалось надёжно сверить разъяснение службы качества с регламентом."
-    if citations:
+    if citations and not variants:
         answer += " " + " ".join(f"[{index}]" for index in range(1, len(citations) + 1))
     if direct:
         step_title = ("Нашёл подтверждённое разъяснение службы качества" if direct_quality
