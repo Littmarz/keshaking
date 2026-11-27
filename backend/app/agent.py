@@ -107,7 +107,7 @@ DAY_COUNTS = {
     "шести": 6, "семи": 7, "восьми": 8, "девяти": 9, "десяти": 10,
 }
 REPLY_THRESHOLD = re.compile(
-    rf"\b(?P<operator>более|не\s+менее)\s+(?P<days>\d+|{'|'.join(DAY_COUNTS)})\s+"
+    rf"\b(?P<operator>не\s+(?:более|менее)|более)\s+(?P<days>\d+|{'|'.join(DAY_COUNTS)})\s+"
     r"(?:рабочего дня|рабочих д(?:ня|ней))\b",
     re.IGNORECASE,
 )
@@ -204,7 +204,7 @@ def workday_answer(question, source, checks):
     return f"Условие «{check['условие']}» при указанном сроке {outcome}. {quote}", False
 
 
-def reply_deadline(source):
+def reply_deadline(source, *, include_inclusive=False):
     """Identify a deadline for changing an object's status when a named role fails to reply."""
     from retrieval.mock import detect_directorates
 
@@ -213,6 +213,9 @@ def reply_deadline(source):
     quote = source["quote"]
     threshold = REPLY_THRESHOLD.search(quote.replace("ё", "е").replace("Ё", "Е"))
     if not threshold:
+        return None
+    operator = " ".join(threshold["operator"].casefold().split())
+    if operator != "более" and not (include_inclusive and operator == "не менее"):
         return None
     condition = quote[:threshold.start()]
     reply = NO_REPLY.fullmatch(condition)
@@ -224,12 +227,11 @@ def reply_deadline(source):
            " ".join(subject.casefold().split()), transition["state"].casefold().replace("ё", "е"))
     number = threshold["days"].casefold()
     days = int(number) if number.isdecimal() else DAY_COUNTS[number]
-    operator = " ".join(threshold["operator"].casefold().split())
     return key, (operator, days), quote[threshold.start():threshold.end()]
 
 
-def conflicting_reply_deadlines(sources, citations):
-    deadlines = [(source, reply_deadline(source)) for source in sources]
+def conflicting_reply_deadlines(sources, citations, *, include_inclusive=False):
+    deadlines = [(source, reply_deadline(source, include_inclusive=include_inclusive)) for source in sources]
     cited_ids = {source["chunk_id"] for source in citations}
     for source, deadline in deadlines:
         if source["chunk_id"] not in cited_ids or not deadline:
@@ -570,8 +572,9 @@ def run_agent(question, history, confirmed_entries=()):
             citations = []
     if (result is not None and not relies_on_quality and DEADLINE_QUESTION.search(original)
             and (status == "answered" or (status == "conflict" and len(citations) == 2))):
-        deadline_sources = citations if status == "conflict" else sources
-        competing = conflicting_reply_deadlines(deadline_sources, citations)
+        model_conflict = status == "conflict"
+        deadline_sources = citations if model_conflict else sources
+        competing = conflicting_reply_deadlines(deadline_sources, citations, include_inclusive=model_conflict)
         if competing:
             citations = [source for source, _ in competing]
             status = "conflict"

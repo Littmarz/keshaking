@@ -282,6 +282,11 @@ class DialogTests(unittest.TestCase):
         ]
         self.assertFalse(conflicting_reply_deadlines([first, *distinct], [first]))
 
+        inclusive = dict(second, quote=second["quote"].replace("более трёх", "не менее пяти"))
+        upper = dict(second, quote=second["quote"].replace("более трёх", "не более трёх"))
+        self.assertFalse(conflicting_reply_deadlines([first, inclusive], [first]))
+        self.assertFalse(conflicting_reply_deadlines([first, upper], [first], include_inclusive=True))
+
 
 if __name__ == "__main__":
     unittest.main()
