@@ -1,2 +1,6 @@
 {"ts": "2026-11-26_2338", "target": "retrieval", "k": 5, "cases": 16, "scored": 14, "hit@5": 0.929, "recall@5": 0.845, "mrr": 0.804, "leaks": 0, "p50_ms": 1.5}
 {"ts": "2026-11-26_2346", "target": "retrieval", "k": 5, "cases": 16, "scored": 14, "hit@5": 0.929, "recall@5": 0.845, "mrr": 0.804, "leaks": 0, "p50_ms": 1.6}
+{"ts": "2026-11-27_0401", "target": "retrieval", "k": 5, "cases": 35, "scored": 32, "hit@5": 0.938, "recall@5": 0.901, "mrr": 0.807, "leaks": 2, "clarify_hint_acc": 1.0, "clarify_hint_n": 27, "low_conf_acc": 1.0, "qa_loop": "ok", "p50_ms": 2.0}
+{"ts": "2026-11-27_0405", "target": "retrieval", "k": 5, "cases": 38, "scored": 34, "hit@5": 0.941, "recall@5": 0.907, "mrr": 0.819, "leaks": 2, "clarify_hint_acc": 1.0, "clarify_hint_n": 29, "low_conf_acc": 1.0, "qa_loop": "ok", "p50_ms": 1.9}
+{"ts": "2026-11-27_0447", "target": "retrieval", "k": 5, "cases": 38, "scored": 34, "hit@5": 0.971, "recall@5": 0.936, "mrr": 0.846, "leaks": 2, "clarify_hint_acc": 1.0, "clarify_hint_n": 29, "low_conf_acc": 1.0, "qa_loop": "ok", "p50_ms": 1.7}
+{"ts": "2026-11-27_0447", "target": "retrieval", "k": 5, "cases": 38, "scored": 34, "hit@5": 0.971, "recall@5": 0.936, "mrr": 0.836, "leaks": 3, "clarify_hint_acc": 1.0, "clarify_hint_n": 29, "low_conf_acc": 1.0, "qa_loop": "ok", "p50_ms": 1.6}

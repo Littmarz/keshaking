@@ -22,6 +22,13 @@ class TestParsing(unittest.TestCase):
         self.assertIn("не более 30%", s13.text)
         self.assertIn("более 30%", s13.text)
 
+    def test_ib_project_table_preserves_empty_cells(self):
+        _, sections = parse_sections(RAW / "ib-project.docx")
+        section = next(section for section in sections if section.section == "1.2")
+        rows = [line for line in section.lines if line.startswith("|")]
+        self.assertEqual(rows[0], "| Обязательно | При наличии |")
+        self.assertEqual(sum(row.startswith("|  | ") for row in rows), 3)
+
     def test_key_clauses_exist(self):
         for doc, sec, needle in [("ib-project", "2.3", "5 рабочих дней"), ("dbrct-project", "1.1.1", "анкет"),
                                  ("tech-project", "1.3", "Заявку на расчёт")]:
@@ -57,6 +64,36 @@ class TestSearch(unittest.TestCase):
         self.assertTrue(mock.search("Какой дресс-код в офисе?").low_confidence)
         self.assertFalse(mock.search("Кто назначает РП на проект ИБ?").low_confidence)
         self.assertEqual(mock.search("Кто назначает РП на проект ИБ?").scope, ["ИБ"])
+
+
+@unittest.skipUnless(HAVE_DATA, "нет DOCX в data/raw/")
+class TestClarifyHint(unittest.TestCase):
+    def test_abstract_question_is_ambiguous(self):
+        res = mock.search("Что будет, если по заявке не хватает информации?")
+        self.assertTrue(res.ambiguous_scope)
+        self.assertGreaterEqual(len({o["directorate"] for o in res.scope_options}), 2)
+
+    def test_explicit_directorate_is_not_ambiguous(self):
+        self.assertFalse(mock.search("Кто назначает РП на проекты ИБ?").ambiguous_scope)
+
+    def test_unique_term_is_not_ambiguous(self):  # квал. анкета есть только в ДБРЦТ
+        self.assertFalse(mock.search("Что будет, если в ЗНП нет квал анкеты?").ambiguous_scope)
+
+    def test_directorate_specific_role_is_not_ambiguous(self):  # TPS есть только в Техдирекции
+        self.assertFalse(mock.search("TPS говорит, что в заявке не хватает данных для РТЗ — что со сроками?").ambiguous_scope)
+
+
+@unittest.skipUnless(HAVE_DATA, "нет DOCX в data/raw/")
+class TestContextAndSynonyms(unittest.TestCase):
+    def test_nested_clause_gets_parent(self):
+        hit = next(h for h in mock.search("Что будет, если в ЗНП нет квал анкеты?").hits
+                   if h.chunk.chunk_id == "dbrct-project::1.1.1")
+        self.assertEqual(hit.parents[0]["section"], "1.1")
+        self.assertIn("квалификационной анкеты", hit.parents[0]["text"])
+
+    def test_preposition_po_is_not_software(self):
+        self.assertNotIn("Программное обеспечение", mock.search("Можно ли начать работы по проекту без договора?").expanded_query)
+        self.assertIn("Программное обеспечение", mock.search("Кто готовит спецификацию на ПО?").expanded_query)
 
 
 @unittest.skipUnless(HAVE_DATA, "нет DOCX в data/raw/")

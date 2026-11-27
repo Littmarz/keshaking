@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { login, request, type Entry, type Ticket } from './api';
 
 const statuses = { open: 'Открыто', answered: 'Черновик', published: 'Опубликовано' };
-type TicketDetail = Ticket & { qa_entry: Entry | null };
+type TicketDetail = Ticket & { qa_entry: Entry | null; test_mail?: boolean };
 
 export function QualityDesk({ initialTicket }: { initialTicket: string | null }) {
   const [token, setToken] = useState('');
@@ -83,7 +83,10 @@ export function QualityDesk({ initialTicket }: { initialTicket: string | null })
     setError('');
     setBusy(true);
     try {
-      const entry = await request<Entry>(`/qa/${selected.qa_entry.qa_entry_id}/confirm`, token, {});
+      const path = selected.test_mail
+        ? `/tickets/${selected.ticket_id}/test-mail-reply`
+        : `/qa/${selected.qa_entry.qa_entry_id}/confirm`;
+      const entry = await request<Entry>(path, token, {});
       updateTicket(entry, 'published');
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Публикация не удалась.');
@@ -121,7 +124,7 @@ export function QualityDesk({ initialTicket }: { initialTicket: string | null })
             <h2>{selected.question}</h2>
             {selected.status === 'published' ? (
               <div className="published" role="status">
-                <strong>Ответ опубликован</strong>
+                <strong>{saved?.confirmed_by === 'quality-mail' ? 'Ответ из письма опубликован' : 'Ответ опубликован'}</strong>
                 <p>{saved?.answer}</p>
                 <small>Учебное разъяснение службы качества</small>
               </div>
@@ -135,9 +138,17 @@ export function QualityDesk({ initialTicket }: { initialTicket: string | null })
                 </div>
                 <div className="review-actions">
                   <button className="secondary" disabled={busy || !answer.trim() || !hasEdits}>Сохранить черновик</button>
-                  {saved && <button className="primary" type="button" disabled={busy || hasEdits} onClick={() => void confirm()}>Подтвердить и опубликовать</button>}
+                  {saved && (
+                    <button className="primary" type="button" disabled={busy || hasEdits} onClick={() => void confirm()}>
+                      {selected.test_mail ? 'Отправить тестовый ответ письмом' : 'Подтвердить и опубликовать'}
+                    </button>
+                  )}
                 </div>
-                {saved && <p className="draft-note" role="status">Черновик сохранён. После подтверждения его можно найти из нового чата.</p>}
+                {saved && <p className="draft-note" role="status">
+                  {selected.test_mail
+                    ? 'Черновик сохранён. После отправки «Пункт» опубликует полученный из почты ответ.'
+                    : 'Черновик сохранён. После подтверждения его можно найти из нового чата.'}
+                </p>}
               </form>
             )}
           </div>

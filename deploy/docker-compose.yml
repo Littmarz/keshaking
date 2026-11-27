@@ -34,6 +34,7 @@ services:
     profiles: [quality-mail]
     environment:
       MP_DATABASE: /data/mailpit.db
+      MP_DISABLE_VERSION_CHECK: "true"
     ports:
       - "127.0.0.1:${PUNKT_MAIL_PORT:-8025}:8025"
     volumes:

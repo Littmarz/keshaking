@@ -19,7 +19,7 @@ from pydantic import BaseModel, StringConstraints
 from app.agent import AgentError, document_corpus_available, document_search_enabled, model_ready, run_agent
 from app.mocks.fake_agent import run_mock
 from app.mocks.knowledge import normalized_question
-from app.quality_mail import deliver_mail
+from app.quality_mail import deliver_mail, employee_address, receive_replies, send_demo_reply
 
 
 USERS = {
@@ -215,9 +215,18 @@ def create_ticket(connection, user_id, session_id, question, reason):
     seq = connection.execute("SELECT seq FROM tickets WHERE dedup_key = ?", (dedup_key,)).fetchone()["seq"]
     ticket_id = f"Q-{seq:04d}"
     created = cursor.rowcount == 1
-    if created and test_mail_enabled():
-        connection.execute("INSERT INTO quality_mail (ticket_seq) VALUES (?)", (seq,))
+    if test_mail_enabled():
+        connection.execute(
+            """INSERT OR IGNORE INTO quality_mail (ticket_seq)
+               SELECT seq FROM tickets WHERE seq = ? AND status IN ('open', 'answered')""",
+            (seq,),
+        )
     message = f"Обращение {ticket_id} {'создано' if created else 'уже существует'} в очереди службы качества."
+    if test_mail_enabled():
+        mail = connection.execute("SELECT sent_at FROM quality_mail WHERE ticket_seq = ?", (seq,)).fetchone()
+        if mail is not None:
+            delivery = "отправлено" if mail["sent_at"] is not None else "поставлено в очередь на отправку"
+            message += f" Письмо {delivery}, {employee_address(user_id)} в копии."
     return {"ticket_id": ticket_id, "created": created, "message": message}
 
 
@@ -331,7 +340,10 @@ def ticket_detail(ticket_id: str):
     with database() as connection:
         row = ticket_row(connection, ticket_id)
         entries = knowledge_entries(connection, ticket_seq=row["seq"])
-    return {**serialize_ticket(row), "qa_entry": entries[0] if entries else None}
+        mail = connection.execute(
+            "SELECT sent_at FROM quality_mail WHERE ticket_seq = ?", (row["seq"],),
+        ).fetchone() if test_mail_enabled() else None
+    return {**serialize_ticket(row), "qa_entry": entries[0] if entries else None, "test_mail": mail is not None}
 
 
 @app.post("/tickets/{ticket_id}/answer", dependencies=[Depends(require_quality)])
@@ -350,6 +362,38 @@ def save_ticket_answer(ticket_id: str, payload: TicketAnswer):
         )
         connection.execute("UPDATE tickets SET status = 'answered' WHERE seq = ?", (ticket["seq"],))
         return knowledge_entries(connection, ticket_seq=ticket["seq"])[0]
+
+
+@app.post("/tickets/{ticket_id}/test-mail-reply", dependencies=[Depends(require_quality)])
+def test_mail_reply(ticket_id: str):
+    if not test_mail_enabled():
+        raise HTTPException(404, "Тестовая почта выключена.")
+
+    with database() as connection:
+        ticket = ticket_row(connection, ticket_id)
+        entries = knowledge_entries(connection, ticket_seq=ticket["seq"])
+        if not entries or ticket["status"] == "rejected":
+            raise HTTPException(409, "Сохраните черновик ответа для этого обращения.")
+        entry = entries[0]
+        if entry["status"] == "confirmed":
+            return entry
+        mail = connection.execute(
+            "SELECT sent_at FROM quality_mail WHERE ticket_seq = ?", (ticket["seq"],),
+        ).fetchone()
+    if mail is None or mail["sent_at"] is None:
+        raise HTTPException(409, "Письмо по обращению ещё отправляется. Попробуйте ещё раз через несколько секунд.")
+
+    try:
+        send_demo_reply(ticket, entry["answer"])
+        receive_replies(database, set())
+    except (OSError, ValueError, KeyError) as exc:
+        raise HTTPException(503, "Тестовая почта временно недоступна. Проверьте обращение перед повторной отправкой.") from exc
+
+    with database() as connection:
+        entry = knowledge_entries(connection, ticket_seq=ticket["seq"])[0]
+    if entry["status"] != "confirmed":
+        raise HTTPException(503, "Ответ ушёл в тестовую почту. Обновите обращение, чтобы увидеть результат обработки.")
+    return entry
 
 
 @app.post("/qa/{entry_id}/confirm", dependencies=[Depends(require_quality)])

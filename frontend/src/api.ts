@@ -28,6 +28,7 @@ export type Entry = {
   doc_id: string | null;
   section: string | null;
   status: 'draft' | 'confirmed';
+  confirmed_by?: string | null;
 };
 
 async function errorFrom(response: Response): Promise<Error> {
