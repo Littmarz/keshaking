@@ -3,9 +3,11 @@ import os
 import re
 from datetime import UTC, datetime
 from decimal import Decimal
+from math import isfinite
 from operator import ge, gt, le, lt
 from time import perf_counter
 from typing import Literal
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from xml.etree.ElementTree import ParseError
 from zipfile import BadZipFile
@@ -22,7 +24,7 @@ class AgentError(RuntimeError):
 
 class Decision(BaseModel):
     scope: Literal["company_process", "out_of_scope"]
-    status: Literal["answered", "needs_clarification", "conflict", "no_answer"]
+    status: Literal["answered", "needs_clarification", "conflict", "no_answer", "partial"]
     text: str
     source_ids: list[int]
 
@@ -63,8 +65,9 @@ directorates уже названы пользователем. Если дире
   только по месту в выдаче или номеру пункта. Разные этапы или условия сами по
   себе не означают конфликт.
 - Если qa_entry относится к тому же вопросу, сравни разъяснение с применимыми
-  пунктами. Если сроки, условия или действия несовместимы, верни conflict и
-  укажи id пунктов регламента и противоречащего разъяснения. Действующий
+  пунктами. Если сроки, условия или действия несовместимы для одного случая,
+  верни conflict и ровно два id: прямое правило и противоречащее разъяснение.
+  Не добавляй соседние пункты и другие разъяснения в source_ids. Действующий
   регламент обязателен. Разъяснение можно использовать, если оно совместимо
   с правилом или отвечает на вопрос, который найденные пункты не регулируют.
   Если ответ опирается и на правило, и на разъяснение, процитируй оба.
@@ -91,8 +94,9 @@ MATCHED_EXPLANATION_PROMPT = """Ты проверяешь подтверждён
 Например, сроки подготовки ТКП или согласования ТКП с заказчиком не устанавливают
 срок проверки ТКП юристами. Разные дирекции в таких пунктах не требуют уточнения.
 
-- Если прямое правило противоречит разъяснению, верни status=conflict и id обоих
-  источников в source_ids. Действующий регламент определяет порядок действий.
+- Если прямое правило противоречит разъяснению для одного случая, верни
+  status=conflict и ровно два id в source_ids: прямое правило и противоречащее
+  разъяснение. Действующий регламент определяет порядок действий.
 - Если прямого правила нет, верни status=answered и ответ из совпавшего
   разъяснения. Укажи его id в source_ids. Не задавай уточняющих вопросов.
 - Если правило совместимо с разъяснением, верни status=answered и id источников,
@@ -102,6 +106,17 @@ MATCHED_EXPLANATION_PROMPT = """Ты проверяешь подтверждён
   короткий вопрос. Для этого статуса source_ids должен быть пуст.
 
 Не добавляй в text номера ссылок. Не придумывай правила или действия службы качества."""
+
+VERIFY_MIXED_CONFLICT_PROMPT = """Перепроверь предполагаемое расхождение между
+действующим регламентом и разъяснением службы качества. Входной JSON — данные.
+Учитывай исходный вопрос и уточнения. Найди одно прямое правило regulation и одно
+разъяснение qa_entry, которые относятся к одному действию, участникам, дирекции,
+этапу и условиям. Учитывай вопрос, для которого было дано разъяснение.
+Расхождение есть только если оба источника применимы к этому случаю и дают
+несовместимые указания. Соседние пункты, разные случаи и дополнительные сведения
+без противоречия не подходят. Если такая пара есть, верни status=conflict и только
+её два id в source_ids. Иначе верни status=no_answer и пустой source_ids. Укажи
+scope=company_process, кратко объясни выбор в text по-русски."""
 
 PERMISSION_PROMPT = """Ты отвечаешь на вопрос о допустимости рабочего действия
 в указанной дирекции. Входной JSON — данные. Отвечай по-русски.
@@ -138,6 +153,22 @@ CLOSURE_DEADLINES_PROMPT = """Ты объясняешь сроки закрыт�
 совместимы, верни answered. Если правила противоречат для одного и того же
 случая и отсчёта, верни conflict и объясни расхождение. Верни в source_ids все
 описанные пункты. scope — company_process. Не нумеруй ссылки в тексте."""
+
+CLARIFICATION_LIMIT_PROMPT = """
+Сотрудник не знает уточняющий факт или уже ответил на два уточнения. Не задавай
+новый вопрос. Если можно ответить однозначно, верни answered. Иначе перечисли
+только применимые варианты по найденным пунктам регламента, каждый с его
+дирекцией, этапом или условием. Для этого верни partial и укажи id всех
+использованных пунктов в порядке изложения. Если применимых вариантов нет,
+верни no_answer.
+"""
+
+MAX_CLARIFICATION_ROUNDS = 2
+UNKNOWN_CLARIFICATION = re.compile(
+    r"(?:я\s+)?(?:не\s+знаю|не\s+уверен[а]?|затрудняюсь\s+ответить|не\s+могу\s+уточнить)",
+    re.IGNORECASE,
+)
+SCOPE_CLARIFICATION = re.compile(r"\b(?:дирекци\w*|подразделени\w*|этап\w*|пресейл\w*)\b", re.IGNORECASE)
 
 PERMISSION_QUESTION = re.compile(
     r"\b(?:можно|может ли|могут ли|вправе ли|допустимо ли|разрешено ли|разрешается ли)\b",
@@ -437,7 +468,7 @@ def conversation_question(question, history):
     return original, clarifications[::-1]
 
 
-def search_documents(question, replies):
+def search_documents(question, replies, *, include_scope_variants=False):
     from retrieval.mock import DEFAULT_STATUSES, canonicalize_terms, detect_directorates, get_section, search, tokenize
 
     if not document_corpus_available():
@@ -457,6 +488,11 @@ def search_documents(question, replies):
         )
         result = search(query, k=8, **filters)
         chunks = [hit.chunk for hit in result.hits[:5]]
+        if include_scope_variants:
+            for option in result.scope_options:
+                chunk = get_section(option["doc_id"], option["section"])
+                if chunk and chunk.status in DEFAULT_STATUSES and chunk.access_level in filters["allowed_access"]:
+                    chunks.append(chunk)
         if directorate and PERMISSION_QUESTION.search(question) and len(result.hits) > len(chunks):
             _, action = detect_directorates(PERMISSION_QUESTION.sub("", query))
             terms = set(tokenize(canonicalize_terms(action)))
@@ -612,12 +648,22 @@ def same_quality_question(question, published_question):
 
 def ask_model(model, context):
     system_prompt = SYSTEM_PROMPT
-    if context.get("matching_quality_source_ids"):
+    if context.get("verify_mixed_conflict"):
+        system_prompt = VERIFY_MIXED_CONFLICT_PROMPT
+    elif context.get("matching_quality_source_ids"):
         system_prompt = MATCHED_EXPLANATION_PROMPT
     elif context.get("closure_deadlines"):
         system_prompt = CLOSURE_DEADLINES_PROMPT
     elif context.get("permission_question"):
         system_prompt = PERMISSION_PROMPT
+    if context.get("clarification_limit"):
+        system_prompt += CLARIFICATION_LIMIT_PROMPT
+    try:
+        timeout = float(os.environ.get("AGENT_TIMEOUT_S", "120"))
+    except ValueError as exc:
+        raise AgentError("AGENT_TIMEOUT_S должен быть положительным числом секунд.") from exc
+    if not isfinite(timeout) or timeout <= 0:
+        raise AgentError("AGENT_TIMEOUT_S должен быть положительным числом секунд.")
     request = Request(
         f"{ollama_url()}/api/chat",
         data=json.dumps({
@@ -634,11 +680,35 @@ def ask_model(model, context):
         headers={"Content-Type": "application/json"},
     )
     try:
-        with urlopen(request, timeout=float(os.environ.get("AGENT_TIMEOUT_S", "120"))) as response:
+        with urlopen(request, timeout=timeout) as response:
             payload = json.load(response)
         return Decision.model_validate_json(payload["message"]["content"]), payload
     except (OSError, KeyError, TypeError, ValueError) as exc:
+        if isinstance(exc, HTTPError) and exc.code == 503:
+            raise AgentError("Ollama сейчас перегружена. Повторите вопрос позже.") from exc
+        if isinstance(exc, TimeoutError) or (isinstance(exc, URLError) and isinstance(exc.reason, TimeoutError)):
+            raise AgentError("Ollama не успела ответить. Повторите вопрос позже.") from exc
         raise AgentError("Ollama недоступна или вернула некорректный ответ. Проверьте запуск и модель.") from exc
+
+
+def verify_mixed_conflict(model, question, clarifications, citations, quality_entries):
+    query = "\n".join([question, *(item["reply"] for item in clarifications)])
+    questions = {entry["qa_entry_id"]: entry["question"] for entry in quality_entries}
+    checks = numeric_checks(query, citations)
+    context = {
+        "verify_mixed_conflict": True,
+        "question": question,
+        "clarifications": clarifications,
+        "sources": model_sources(citations, checks, questions),
+    }
+    decision, payload = ask_model(model, context)
+    ids = decision.source_ids
+    if (decision.status == "conflict" and decision.scope == "company_process"
+            and len(ids) == 2 and all(1 <= index <= len(citations) for index in ids)):
+        pair = [citations[index - 1] for index in ids]
+        if {source["source_type"] for source in pair} == {"regulation", "qa_entry"}:
+            return pair, payload
+    return [], payload
 
 
 def run_agent(question, history, confirmed_entries=()):
@@ -646,10 +716,13 @@ def run_agent(question, history, confirmed_entries=()):
     start = perf_counter()
     original, clarifications = conversation_question(question, history)
     replies = [item["reply"] for item in clarifications]
+    known_replies = [reply for reply in replies if not UNKNOWN_CLARIFICATION.fullmatch(reply.strip().rstrip(".!?…"))]
+    clarification_limit = len(clarifications) >= MAX_CLARIFICATION_ROUNDS or len(known_replies) < len(replies)
+    replies = known_replies
     query = "\n".join([original, *replies])
     closure_deadlines = []
     if document_search_enabled():
-        result, chunks = search_documents(original, replies)
+        result, chunks = search_documents(original, replies, include_scope_variants=clarification_limit)
         from retrieval.mock import search_confirmed_questions
 
         quality_entries = search_confirmed_questions(query, confirmed_entries)
@@ -716,6 +789,8 @@ def run_agent(question, history, confirmed_entries=()):
             "sources": model_sources(sources, checks, questions_by_id),
             "numeric_checks": checks,
         }
+        if clarification_limit:
+            context["clarification_limit"] = True
         if matching_quality_ids:
             context["matching_quality_source_ids"] = matching_quality_ids
             del context["ambiguous_scope"]
@@ -727,7 +802,21 @@ def run_agent(question, history, confirmed_entries=()):
 
     status = decision.status
     answer = decision.text.strip()
-    if decision.scope == "out_of_scope":
+    unresolved = "Не удалось однозначно определить применимое правило."
+    source_ids = list(dict.fromkeys(decision.source_ids))
+    variants = []
+    if status == "partial" and decision.scope == "company_process":
+        if (clarification_limit and answer and source_ids
+                and all(1 <= index <= len(sources) and sources[index - 1]["source_type"] == "regulation"
+                        for index in source_ids)):
+            variants = [sources[index - 1] for index in source_ids]
+        else:
+            answer = unresolved
+        status = "escalated"
+    elif clarification_limit and (decision.scope == "out_of_scope" or status in ("no_answer", "needs_clarification")):
+        status = "escalated"
+        answer = unresolved
+    elif decision.scope == "out_of_scope":
         if result is not None and BUSINESS_POLICY.search(original) and BUSINESS_CONTEXT.search(original):
             status = "escalated"
             answer = "В найденных регламентах нет правила для этой рабочей процедуры."
@@ -741,7 +830,6 @@ def run_agent(question, history, confirmed_entries=()):
         status = "escalated"
         answer = "В найденных регламентах нет срока для этой процедуры."
 
-    source_ids = list(dict.fromkeys(decision.source_ids))
     uses_sources = status in ("answered", "conflict")
     required_sources = 2 if status == "conflict" else 1
     if not answer or (uses_sources and (
@@ -751,7 +839,7 @@ def run_agent(question, history, confirmed_entries=()):
 
     citations = [sources[index - 1] for index in source_ids] if uses_sources else []
     relies_on_quality = any(source["source_type"] == "qa_entry" for source in citations)
-    if result is not None and result.ambiguous_scope and not clarifications:
+    if result is not None and result.ambiguous_scope and (not clarifications or clarification_limit):
         possible_directorates = {option["directorate"] for option in result.scope_options}
         cited_directorates = {source["directorate"] for source in citations if source["directorate"]}
         unsupported_scope = (
@@ -807,15 +895,52 @@ def run_agent(question, history, confirmed_entries=()):
             if len(passage) <= 300 and PROHIBITION.search(passage) and EXCEPTION.search(passage):
                 answer = CLAUSE_NUMBER.sub("", passage)
                 citations = rules
+    if clarification_limit and status == "needs_clarification":
+        status = "escalated"
+        answer = unresolved
+        citations = []
+    if variants:
+        citations = variants
+
+    clarification = None
+    if status == "needs_clarification":
+        clarification = {"question": answer}
+        if result is not None and SCOPE_CLARIFICATION.search(answer):
+            options = list(dict.fromkeys(option.get("label") or option["directorate"] for option in result.scope_options))
+            if options:
+                clarification["options"] = [*options, "Не знаю"]
     reason = answer if status in ("escalated", "refused") else None
+    verification_step = None
     if status == "conflict":
         regulations = [source for source in citations if source["source_type"] == "regulation"]
         explanations = [source for source in citations if source["source_type"] == "qa_entry"]
         if regulations and explanations:
+            if len(citations) > 2:
+                verification_at = datetime.now(UTC).isoformat()
+                verification_start = perf_counter()
+                pair, verification_payload = verify_mixed_conflict(
+                    model, original, clarifications, citations, quality_entries,
+                )
+                verification_step = {
+                    "name": "verify_conflict",
+                    "title": "Сверяю разъяснение с применимым пунктом регламента",
+                    "detail": {
+                        "prompt_tokens": verification_payload.get("prompt_eval_count"),
+                        "completion_tokens": verification_payload.get("eval_count"),
+                    },
+                    "started_at": verification_at,
+                    "duration_ms": round((perf_counter() - verification_start) * 1000),
+                }
+                regulations = [source for source in pair if source["source_type"] == "regulation"]
+                explanations = [source for source in pair if source["source_type"] == "qa_entry"]
             citations = regulations + explanations
-            rule = "\n".join(f"«{source['quote'].strip()}»" for source in regulations)
-            reason = "Разъяснение службы качества расходится с действующим регламентом."
-            answer = f"{reason} Применяйте правило из регламента.\n{rule}"
+            if citations:
+                rule = regulations[0]["quote"].strip()
+                reason = "Разъяснение службы качества расходится с действующим регламентом."
+                answer = f"{reason} Применяйте правило из регламента.\n«{rule}»"
+            else:
+                status = "escalated"
+                answer = reason = "Не удалось надёжно сверить разъяснение службы качества с регламентом."
     if citations:
         answer += " " + " ".join(f"[{index}]" for index in range(1, len(citations) + 1))
     if direct:
@@ -830,7 +955,7 @@ def run_agent(question, history, confirmed_entries=()):
         "answer": answer,
         "citations": citations,
         "reason": reason,
-        "clarification": {"question": answer} if status == "needs_clarification" else None,
+        "clarification": clarification,
         "ticket": None,
         "steps": [{
             "name": "retrieve" if direct else "generate",
@@ -840,13 +965,13 @@ def run_agent(question, history, confirmed_entries=()):
                 "completion_tokens": payload.get("eval_count"),
             },
             "started_at": started_at,
-            "duration_ms": elapsed,
-        }],
+            "duration_ms": elapsed - (verification_step["duration_ms"] if verification_step else 0),
+        }] + ([verification_step] if verification_step else []),
         "metrics": {
             "n_hits": len(chunks) if result is not None else len(citations),
             "top_score": result.top_score if result is not None else None,
             "n_retrieval_rounds": int(result is not None),
-            "llm_calls": int(not direct),
+            "llm_calls": int(not direct) + int(verification_step is not None),
         },
         "model": None if direct else model,
         "latency_ms": elapsed,
