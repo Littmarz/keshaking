@@ -1,31 +1,45 @@
 # Компоненты третьих лиц
 
 > По условиям перечень использованных библиотек, моделей и наработок третьих лиц **обязателен** в описании продукта.
-> Вписываем сюда только то, что **реально попало в решение**. Лицензию сверяем с карточкой/репозиторием в момент добавления.
+> Для моделей организаторы просят ссылку на карточку Hugging Face / страницу модели с лицензией (чат задачи, 26.11).
+> Сверено с кодом 28.11 (ветки `main` и `integration/punkt-release`).
 
-| Компонент | Для чего | Лицензия | Используем? |
+## Используется в демо-сборке «Пункт»
+
+| Компонент | Для чего | Лицензия | Ссылка |
 |---|---|---|---|
-| Qwen3-8B (`qwen3:8b`, D-004) | LLM | Apache 2.0 | да |
-| BAAI/bge-m3 | эмбеддинги | MIT | |
-| BAAI/bge-reranker-v2-m3 | реранкер | Apache 2.0 | |
-| Ollama | запуск LLM | MIT | да |
-| Qdrant | векторная БД | Apache 2.0 | |
-| LangGraph | граф агента | MIT | |
-| FastAPI, SQLModel | backend | MIT | |
-| docling | парсинг PDF/DOCX | MIT | |
-| python-docx | парсинг DOCX | MIT | |
-| PyMuPDF | запасной парсер PDF | ⚠️ **AGPL-3.0** — при закрытом коде лучше не брать или осознанно указать | |
-| rank-bm25 | лексический поиск | Apache 2.0 | |
-| razdel, pymorphy3 | токенизация, леммы | MIT | |
-| FlagEmbedding | инференс bge | MIT | |
-| React, Vite, Tailwind, shadcn/ui, Recharts | frontend | MIT | |
+| **Qwen3-8B** (`qwen3:8b`) | LLM агента | Apache 2.0 | huggingface.co/Qwen/Qwen3-8B · ollama.com/library/qwen3 |
+| **Ollama** | локальный запуск LLM | MIT | github.com/ollama/ollama |
+| FastAPI | backend API | MIT | github.com/fastapi/fastapi |
+| Starlette (зависимость FastAPI) | веб-слой | BSD-3-Clause | github.com/encode/starlette |
+| Pydantic | схемы данных | MIT | github.com/pydantic/pydantic |
+| Uvicorn | ASGI-сервер | BSD-3-Clause | github.com/encode/uvicorn |
+| React, React DOM | интерфейс | MIT | github.com/facebook/react |
+| Vite | сборка фронтенда | MIT | github.com/vitejs/vite |
+| TypeScript | фронтенд | Apache 2.0 | github.com/microsoft/TypeScript |
+| Mailpit | тестовый почтовый ящик службы качества (демо) | MIT | github.com/axllent/mailpit |
+| Docker-образы `node:24-bookworm-slim`, `python:3.12-slim-bookworm` | сборка и запуск | Node.js — MIT, Python — PSF; компоненты Debian — свои лицензии | hub.docker.com |
+| uv | установка Python-зависимостей в образе | MIT или Apache 2.0 | github.com/astral-sh/uv |
 
-## Сборка демо через Docker Compose
+Своё (не сторонние компоненты): поиск BM25 с синонимами, разбор DOCX (стандартная библиотека Python: `zipfile`, `xml`), агент, проверка числовых порогов, хранение в SQLite (стандартная библиотека), eval и калькулятор стоимости.
 
-| Компонент | Для чего | Лицензия |
-|---|---|---|
-| [Node.js](https://github.com/nodejs/node/blob/main/LICENSE) 24, образ `node:24-bookworm-slim` | сборка React и Vite | MIT для Node.js |
-| [Python](https://docs.python.org/3/license.html) 3.12, образ `python:3.12-slim-bookworm` | среда FastAPI | PSF для Python |
-| [uv](https://github.com/astral-sh/uv/blob/main/docs/reference/policies/license.md) 0.13.10 | установка зависимостей Python в контейнере | MIT или Apache 2.0 |
+## Опционально (гибридный поиск, включается при наличии моделей — в демо-сборку не входит)
 
-Компоненты Debian и сторонние зависимости в базовых образах распространяются под собственными лицензиями.
+| Компонент | Для чего | Лицензия | Ссылка |
+|---|---|---|---|
+| BAAI/bge-m3 | эмбеддинги | MIT | huggingface.co/BAAI/bge-m3 |
+| BAAI/bge-reranker-v2-m3 | реранкер | Apache 2.0 | huggingface.co/BAAI/bge-reranker-v2-m3 |
+| FlagEmbedding | инференс bge | MIT | github.com/FlagOpen/FlagEmbedding |
+| PyTorch | инференс моделей | BSD-3-Clause | pytorch.org |
+| NumPy | векторы | BSD-3-Clause | numpy.org |
+
+## Рассматривались, но не используются
+
+LangGraph, Qdrant, docling, python-docx, PyMuPDF, rank-bm25, razdel, pymorphy3, vLLM — в описание продукта **не** включать.
+
+## Дизайн (заполнить, когда выберем)
+
+| Компонент | Лицензия |
+|---|---|
+| Шрифты (например, Unbounded, Golos Text — Google Fonts) | SIL Open Font License 1.1 |
+| Набор иконок | (Phosphor — MIT; Solar — CC BY 4.0, указать автора) |

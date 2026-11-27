@@ -8,9 +8,25 @@
 
 1. **Ответ по регламенту** — с названием документа и номером пункта, с условиями и исключениями; нужны несколько регламентов — собрать из них.
 2. **Уточнение при неоднозначности** — один конкретный вопрос сотруднику (дирекция? этап?), следующий ход учитывает и вопрос, и ответ.
-3. **Пополнение базы через службу качества** — нет ответа → обращение в локальную очередь → сотрудник качества отвечает и подтверждает → агент использует подтверждённое знание на похожих вопросах.
+3. **Пополнение базы через службу качества** — нет ответа → письмо в службу качества (сотрудник в копии) → эксперт отвечает письмом → агент публикует ответ в базу знаний и использует его на похожих вопросах.
 
-Корпус — 4 DOCX (проектная и пресейловая деятельность дирекций ИБ, ДБРЦТ, Техдирекции). Модель — `qwen3:8b` в Ollama на Mac, без внешних LLM API. Контрольные прогоны — [eval/datasets/control.jsonl](eval/datasets/control.jsonl) (16 сценариев).
+Корпус — 4 DOCX (проектная и пресейловая деятельность дирекций ИБ, ДБРЦТ, Техдирекции). Модель — `qwen3:8b` в Ollama, без внешних LLM API. Контрольные прогоны — [eval/datasets/control.jsonl](eval/datasets/control.jsonl) (38 сценариев). Компоненты и лицензии — [docs/third-party.md](docs/third-party.md).
+
+## 🚀 Быстрый запуск
+
+Нужны **Docker Desktop**, **Node.js 22+** и **Ollama** с моделью `qwen3:8b` (`ollama pull qwen3:8b`). Четыре DOCX заказчика положить в `data/raw/` как `ib-project.docx`, `ib-presale.docx`, `dbrct-project.docx`, `tech-project.docx` (в репозиторий не входят).
+
+```bash
+AGENT_MODE=real AGENT_SOURCES=documents PUNKT_TEST_MAIL=1 COMPOSE_PROFILES=quality-mail node frontend/scripts/build.mjs --docker
+```
+
+PowerShell: `$env:AGENT_MODE="real"; $env:AGENT_SOURCES="documents"; $env:PUNKT_TEST_MAIL="1"; $env:COMPOSE_PROFILES="quality-mail"; node frontend/scripts/build.mjs --docker`
+
+- Приложение: http://127.0.0.1:8080 · тестовая почта службы качества (Mailpit): http://127.0.0.1:8025
+- Проверка: `curl http://127.0.0.1:8080/api/health` → `{"db":"ok","search":"ok","llm":"ok"}`
+- Без модели (учебные примеры): `node frontend/scripts/build.mjs --docker`
+- Подробно и сценарий демо — [deploy/punkt-demo.md](deploy/punkt-demo.md)
+- Контрольный прогон качества через работающий стенд: `python -m eval.run --target api --base-url http://127.0.0.1:8080/api`
 
 ---
 

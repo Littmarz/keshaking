@@ -43,3 +43,6 @@ sandbox/**
 .DS_Store
 Thumbs.db
 .idea/
+
+# сырые ответы прогона через API: содержат фрагменты регламентов заказчика
+eval/reports/*_api_runs.jsonl
