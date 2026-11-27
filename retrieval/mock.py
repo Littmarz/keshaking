@@ -221,6 +221,17 @@ def expand(text: str, skip: set[str] | frozenset = frozenset()) -> str:
     return text + ("\n" + " ".join(extra) if extra else "")
 
 
+def canonicalize_terms(text: str) -> str:
+    """Replace known aliases when comparing the wording of two clauses."""
+    for canonical, aliases in _synonyms():
+        names = sorted({canonical, *aliases}, key=len, reverse=True)
+        expression = "|".join(
+            re.escape(name) if _is_abbr(name) else f"(?i:{re.escape(name)})" for name in names
+        )
+        text = re.sub(rf"(?<![\w-])(?:{expression})(?![\w-])", lambda _: canonical, text)
+    return text
+
+
 # ---------------------------------------------------------------- загрузка корпуса
 
 def _chunks_from_jsonl(path: Path) -> list[Chunk]:

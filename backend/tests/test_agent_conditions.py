@@ -4,7 +4,18 @@ import os
 import unittest
 from unittest.mock import patch
 
-from app.agent import model_sources, numeric_checks, run_agent, workday_answer
+from app.agent import (
+    AgentError,
+    conflicting_reply_deadlines,
+    following_recovery_step,
+    model_sources,
+    numeric_checks,
+    run_agent,
+    same_quality_question,
+    shared_rule,
+    workday_answer,
+)
+from retrieval.mock import Chunk, Hit, SearchResult
 
 
 class NumericCheckTests(unittest.TestCase):
@@ -29,7 +40,7 @@ class NumericCheckTests(unittest.TestCase):
         self.assertEqual(numeric_checks("Прошло 4 рабочих дня или 6 рабочих дней?", sources), [])
 
     def test_filters_only_the_complementary_branch_for_generation(self):
-        original = "Если подходящего предложения нет:\na. Не более 30%: подключается SS.\nb. Более 30%: только поставка."
+        original = "2. Если подходящего предложения нет:\na. Не более 30%: подключается SS.\nb. Более 30%: только поставка."
         sources = [{"quote": original}]
         [model_source] = model_sources(sources, numeric_checks("Доля 30%.", sources))
         self.assertIn("Если подходящего предложения нет", model_source["quote"])
@@ -88,6 +99,159 @@ class QualityRoutingTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "refused")
         self.assertIn("руководителю", result["answer"])
+
+    def test_published_duration_answer_matches_paraphrase_and_keeps_conditions(self):
+        question = "Сколько дней даётся на согласование ТКП с юристами?"
+        self.assertTrue(same_quality_question("За сколько дней юристы согласуют ТКП?", question))
+        self.assertFalse(same_quality_question("Сколько дней даётся на согласование ТКП без юристов?", question))
+        self.assertFalse(same_quality_question("За сколько часов юристы согласуют ТКП?", question))
+        self.assertFalse(same_quality_question("За сколько дней бухгалтерия согласует ТКП?", question))
+
+    def test_missing_work_policy_routes_to_quality_even_if_model_refuses(self):
+        decision = {"scope": "out_of_scope", "status": "no_answer", "text": "Нет данных.", "source_ids": []}
+        raw = json.dumps({"message": {"content": json.dumps(decision)}}).encode()
+        cases = (
+            ("Как меняется лицензия при реорганизации юрлица?", "escalated"),
+            ("Какие требования к одежде на переговорах с заказчиком?", "escalated"),
+            ("Какая у меня будет премия за сделку с заказчиком?", "refused"),
+        )
+        for question, expected in cases:
+            with self.subTest(question=question), patch.dict(os.environ, {"AGENT_SOURCES": "documents"}), patch(
+                "app.agent.search_documents", return_value=(SearchResult(hits=[]), [])
+            ), patch("app.agent.urlopen", return_value=io.BytesIO(raw)):
+                self.assertEqual(run_agent(question, [])["status"], expected)
+
+
+class DialogTests(unittest.TestCase):
+    def test_model_receives_original_question_and_all_clarifications(self):
+        history = [
+            {"role": "user", "content": "Сколько дней дают на расчёт?", "status": None},
+            {"role": "assistant", "content": "Какая дирекция?", "status": "needs_clarification"},
+            {"role": "user", "content": "ДБРЦТ", "status": None},
+            {"role": "assistant", "content": "Какая оценка нужна?", "status": "needs_clarification"},
+        ]
+        decision = {"scope": "company_process", "status": "answered", "text": "Ответ", "source_ids": [1]}
+        response = {"message": {"content": json.dumps(decision)}}
+        with patch.dict(os.environ, {"AGENT_SOURCES": "demo"}), patch(
+            "app.agent.urlopen", return_value=io.BytesIO(json.dumps(response).encode())
+        ) as ollama:
+            run_agent("Точная оценка", history)
+
+        request = json.loads(ollama.call_args.args[0].data)
+        model_input = json.loads(request["messages"][-1]["content"])
+        self.assertEqual(model_input["question"], history[0]["content"])
+        self.assertEqual(model_input["clarifications"], [
+            {"preceding_question": "Какая дирекция?", "reply": "ДБРЦТ"},
+            {"preceding_question": "Какая оценка нужна?", "reply": "Точная оценка"},
+        ])
+
+    def test_answer_from_only_one_plausible_directorate_requires_clarification(self):
+        result = SearchResult(hits=[], ambiguous_scope=True, scope_options=[
+            {"directorate": "ДБРЦТ"}, {"directorate": "Техдирекция"},
+        ])
+        chunks = [
+            Chunk("dbrct::1.2", "dbrct", "ДБРЦТ", "1.2", "Срок — два дня.", directorate="ДБРЦТ"),
+            Chunk("tech::1.2", "tech", "Техническая дирекция", "1.2", "Срок — пять дней.",
+                  directorate="Техдирекция"),
+        ]
+        decision = {"scope": "company_process", "status": "answered", "text": "Два дня.", "source_ids": [1]}
+        response = {"message": {"content": json.dumps(decision)}}
+        with patch.dict(os.environ, {"AGENT_SOURCES": "documents"}), patch(
+            "app.agent.search_documents", return_value=(result, chunks)
+        ), patch("app.agent.urlopen", return_value=io.BytesIO(json.dumps(response).encode())):
+            answer = run_agent("Сколько дней на заявку?", [])
+
+        self.assertEqual(answer["status"], "needs_clarification")
+        self.assertIn("дирекции", answer["clarification"]["question"])
+        self.assertEqual(answer["citations"], [])
+
+    def test_shared_rule_preserves_negation_and_recognizes_role_aliases(self):
+        question = "Кто отвечает за проверку заявки?"
+        first = {"directorate": "ИБ", "quote": "За проверку заявки отвечает АМ."}
+        second = {"directorate": "Техдирекция", "quote": "За проверку заявки отвечает Аккаунт-менеджер."}
+        self.assertTrue(shared_rule(question, [first, second]))
+        negated = dict(second, quote=second["quote"].replace("отвечает", "не отвечает"))
+        self.assertFalse(shared_rule(question, [first, negated]))
+
+    def test_direct_procedure_returns_the_verified_clause_without_ollama(self):
+        chunk = Chunk("example::1.2", "example", "Порядок работы", "1.2",
+                      "1.2. Для создания спецификации АМ создаёт заявку на расчёт в CRM.",
+                      directorate="Техдирекция")
+        result = SearchResult(hits=[Hit(chunk, 1.0)], top_score=1.0, scope=["Техдирекция"])
+        with patch.dict(os.environ, {"AGENT_SOURCES": "documents"}), patch(
+            "app.agent.search_documents", return_value=(result, [chunk])
+        ), patch("app.agent.urlopen") as ollama:
+            answer = run_agent("Как в Техдирекции создать спецификацию?", [])
+
+        self.assertEqual(answer["status"], "answered")
+        self.assertEqual(answer["citations"][0]["chunk_id"], chunk.chunk_id)
+        self.assertIn("заявку на расчёт в CRM", answer["answer"])
+        ollama.assert_not_called()
+
+    def test_missing_document_from_clarification_selects_exact_condition(self):
+        chunk = Chunk("example::1.2", "example", "Порядок работы", "1.2",
+                      "1.2. При отсутствии квалификационной анкеты Архитектор ожидает её предоставления.",
+                      directorate="ДБРЦТ")
+        result = SearchResult(hits=[Hit(chunk, 0.5)], top_score=0.5, scope=["ДБРЦТ"])
+        history = [
+            {"role": "user", "content": "Что будет, если не хватает информации?", "status": None},
+            {"role": "assistant", "content": "Какая дирекция?", "status": "needs_clarification"},
+        ]
+        with patch.dict(os.environ, {"AGENT_SOURCES": "documents"}), patch(
+            "app.agent.search_documents", return_value=(result, [chunk])
+        ), patch("app.agent.urlopen") as ollama:
+            answer = run_agent("ДБРЦТ, нет квалификационной анкеты", history)
+
+        self.assertEqual(answer["status"], "answered")
+        self.assertIn("Архитектор ожидает", answer["answer"])
+        ollama.assert_not_called()
+
+    def test_recovery_step_follows_the_status_transition_in_the_same_regulation(self):
+        deadline = {
+            "doc_id": "a", "section": "2.3", "source_type": "regulation", "directorate": "ИБ", "stage": "проект",
+            "quote": "Если РП не отвечает более 5 рабочих дней, карточка переводится в статус «Закрыта».",
+        }
+        recovery = dict(deadline, section="2.4", quote="2.4. Чтобы вернуть карточку в работу, смените статус на «Новый».")
+        result = following_recovery_step("Что будет, если РП не ответит?", [deadline, recovery], [deadline])
+        self.assertEqual(result, (recovery, "Чтобы вернуть карточку в работу, смените статус на «Новый»."))
+        self.assertIsNone(following_recovery_step("Через сколько дней закроют?", [deadline, recovery], [deadline]))
+        self.assertIsNone(following_recovery_step("Что будет?", [deadline, dict(recovery, doc_id="b")], [deadline]))
+
+    def test_conflict_requires_two_distinct_verified_sources(self):
+        for source_ids in ([1, 2], [1, 1], [1, 999]):
+            with self.subTest(source_ids=source_ids):
+                decision = {"scope": "company_process", "status": "conflict", "text": "Сроки расходятся.",
+                            "source_ids": source_ids}
+                response = {"message": {"content": json.dumps(decision)}}
+                with patch.dict(os.environ, {"AGENT_SOURCES": "demo"}), patch(
+                    "app.agent.urlopen", return_value=io.BytesIO(json.dumps(response).encode())
+                ):
+                    if source_ids == [1, 2]:
+                        result = run_agent("Какой срок?", [])
+                        self.assertEqual(result["status"], "conflict")
+                        self.assertEqual(len(result["citations"]), 2)
+                        self.assertIsNone(result["ticket"])
+                    else:
+                        with self.assertRaises(AgentError):
+                            run_agent("Какой срок?", [])
+
+    def test_reply_deadlines_conflict_only_for_same_role_stage_and_status(self):
+        first = {
+            "chunk_id": "a", "source_type": "regulation", "directorate": "ИБ", "stage": "проект",
+            "quote": "В случае отсутствия ответа от РП более 5 рабочих дней карточка переводится в статус «Закрыта».",
+        }
+        second = dict(first, chunk_id="b", quote="Если РП не отвечает более трёх рабочих дней, "
+                      "карточка переводится в статус «Закрыта».")
+        self.assertEqual(conflicting_reply_deadlines([first, second], [first]), [
+            (first, "более 5 рабочих дней"), (second, "более трёх рабочих дней"),
+        ])
+        distinct = [
+            dict(second, stage="пресейл"),
+            dict(second, quote=second["quote"].replace("РП", "АМ")),
+            dict(second, quote=second["quote"].replace("Закрыта", "Открыта")),
+            dict(second, quote=second["quote"].replace("трёх", "пяти")),
+        ]
+        self.assertFalse(conflicting_reply_deadlines([first, *distinct], [first]))
 
 
 if __name__ == "__main__":
