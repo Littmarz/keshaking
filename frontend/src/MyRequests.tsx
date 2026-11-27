@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
+import { ChatTextIcon } from '@phosphor-icons/react';
 import { ApiError, request, type MyTicket } from './api';
+import { Tag } from './Answer';
+import { ticketDate } from './dates';
 
-const statuses: Record<MyTicket['status'], string> = {
-  open: 'Ждёт ответа', answered: 'Ждёт ответа', published: 'Ответ получен',
-};
-const ticketDate = new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+type Filter = 'all' | 'waiting' | 'answered';
 
 export function MyRequests({ token, onExpired, initialTicket, openChat }: {
   token: string;
@@ -15,7 +15,7 @@ export function MyRequests({ token, onExpired, initialTicket, openChat }: {
   const [tickets, setTickets] = useState<MyTicket[]>([]);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState('');
-  const [loadAttempt, setLoadAttempt] = useState(0);
+  const [filter, setFilter] = useState<Filter>('all');
 
   const reportError = useCallback((cause: unknown) => {
     if (cause instanceof ApiError && cause.status === 401) onExpired(token);
@@ -38,53 +38,49 @@ export function MyRequests({ token, onExpired, initialTicket, openChat }: {
     }
     void load();
     return () => controller.abort();
-  }, [token, loadAttempt, reportError]);
+  }, [token, reportError]);
 
   useEffect(() => {
     if (initialTicket && tickets.length) document.getElementById(`ticket-${initialTicket}`)?.scrollIntoView({ block: 'center' });
   }, [initialTicket, tickets]);
 
-  const waiting = tickets.filter(({ status }) => status !== 'published').length;
+  const waiting = tickets.filter(({ status }) => status !== 'published');
+  const answered = tickets.filter(({ status }) => status === 'published');
+  const shown = filter === 'waiting' ? waiting : filter === 'answered' ? answered : tickets;
 
   return (
-    <section className="quality" aria-labelledby="requests-heading">
-      <div className="workspace-heading">
-        <h1 id="requests-heading">Мои обращения</h1>
-        <p>Вопросы, на которые не нашлось ответа в регламентах. Они ушли письмом в службу качества, вы в копии.</p>
+    <section className="page" aria-labelledby="requests-heading">
+      <h1 id="requests-heading">Мои обращения</h1>
+      <p className="lead">Вопросы, на которые не нашлось ответа в регламентах. Вы получаете письмо по каждому.</p>
+      <div className="filters" role="group" aria-label="Фильтр обращений">
+        <button type="button" className="pill" aria-pressed={filter === 'all'} onClick={() => setFilter('all')}>Все · {tickets.length}</button>
+        <button type="button" className="pill" aria-pressed={filter === 'waiting'} onClick={() => setFilter('waiting')}>Ждут ответа · {waiting.length}</button>
+        <button type="button" className="pill" aria-pressed={filter === 'answered'} onClick={() => setFilter('answered')}>С ответом · {answered.length}</button>
       </div>
-      {error && <p className="error" role="alert">{error}</p>}
-      <div className="card queue">
-        <div className="queue-title">
-          <h2>Обращения <span className="counter">{tickets.length}</span>
-            {waiting > 0 && <span className="requests-waiting">ждут ответа: {waiting}</span>}</h2>
-          <button className="secondary" type="button" disabled={busy} onClick={() => setLoadAttempt((attempt) => attempt + 1)}>
-            Обновить
-          </button>
-        </div>
-        {busy && !tickets.length && <p role="status">Загружаю обращения…</p>}
-        {!busy && !tickets.length && !error && <p>Пока обращений нет. Если агент не найдёт ответ, вопрос появится здесь.</p>}
-        <ul className="requests">
-          {tickets.map((ticket) => (
-            <li key={ticket.ticket_id} id={`ticket-${ticket.ticket_id}`}
-              className={`request request-${ticket.status === 'published' ? 'done' : 'waiting'}`}
-              aria-current={ticket.ticket_id === initialTicket ? 'true' : undefined}>
-              <div className="ticket-meta">
-                <strong>{ticket.ticket_id}</strong>
-                <span className="request-status">{statuses[ticket.status]}</span>
-                <time dateTime={ticket.created_at}>{ticketDate.format(new Date(ticket.created_at))}</time>
-              </div>
-              <p className="request-question">{ticket.question}</p>
-              {ticket.answer && <div className="published">
-                <strong>Ответ службы качества</strong>
-                <p>{ticket.answer}</p>
-                {(ticket.doc_id || ticket.section) && <small>
-                  {[ticket.doc_id, ticket.section && `п. ${ticket.section}`].filter(Boolean).join(' · ')}
-                </small>}
-              </div>}
-              <button type="button" className="secondary" onClick={() => openChat(ticket.session_id)}>Открыть чат</button>
-            </li>
-          ))}
-        </ul>
+      {error && <p className="alert" role="alert">{error}</p>}
+      {busy && !tickets.length && <p className="empty-note" role="status">Загружаю обращения…</p>}
+      {!busy && !shown.length && !error && <p className="empty-note">
+        {tickets.length ? 'В этом списке пока пусто.' : 'Пока обращений нет. Если в регламентах не найдётся ответа, вопрос появится здесь.'}
+      </p>}
+      <div className="cards">
+        {shown.map((ticket) => (
+          <article key={ticket.ticket_id} id={`ticket-${ticket.ticket_id}`} className="ticket surface"
+            aria-current={ticket.ticket_id === initialTicket ? 'true' : undefined}>
+            <div className="ticket-head">
+              <span className="ticket-id">{ticket.ticket_id}</span>
+              {ticket.status === 'published' ? <Tag tone="ok">Ответ получен</Tag> : <Tag tone="wait">Ждёт ответа</Tag>}
+              <time className="ticket-date" dateTime={ticket.created_at}>{ticketDate(ticket.created_at)}</time>
+            </div>
+            <p className="ticket-q">{ticket.question}</p>
+            {ticket.answer && <div className="reply-box">
+              {ticket.answer}
+              {(ticket.doc_id || ticket.section) && <small>{[ticket.doc_id, ticket.section && `п. ${ticket.section}`].filter(Boolean).join(' · ')}</small>}
+            </div>}
+            <button type="button" className="link-btn" onClick={() => openChat(ticket.session_id)}>
+              <ChatTextIcon size={24} aria-hidden="true" />Открыть чат
+            </button>
+          </article>
+        ))}
       </div>
     </section>
   );

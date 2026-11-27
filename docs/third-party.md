@@ -37,9 +37,13 @@
 
 LangGraph, Qdrant, docling, python-docx, PyMuPDF, rank-bm25, razdel, pymorphy3, vLLM — в описание продукта **не** включать.
 
-## Дизайн (заполнить, когда выберем)
+## Дизайн интерфейса
 
-| Компонент | Лицензия |
-|---|---|
-| Шрифты (например, Unbounded, Golos Text — Google Fonts) | SIL Open Font License 1.1 |
-| Набор иконок | (Phosphor — MIT; Solar — CC BY 4.0, указать автора) |
+Макет — собственный, Figma «ИИКУЗНИЦА» (команда). Шрифты и иконки подключены из npm и лежат в сборке (без внешних CDN — этого требует CSP стенда).
+
+| Компонент | Для чего | Лицензия | Ссылка |
+|---|---|---|---|
+| Unbounded | заголовки, навигация | SIL Open Font License 1.1 | fonts.google.com/specimen/Unbounded |
+| Golos Text | основной текст | SIL Open Font License 1.1 | fonts.google.com/specimen/Golos+Text |
+| @fontsource/unbounded, @fontsource/golos-text | упаковка шрифтов для сборки | MIT (пакеты), шрифты — OFL 1.1 | github.com/fontsource/fontsource |
+| Phosphor Icons (@phosphor-icons/react; иконки макета — тот же набор) | иконки | MIT | github.com/phosphor-icons/react |

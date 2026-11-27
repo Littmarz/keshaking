@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { login, request, type Account, type AuthSession } from './api';
+import { LogoMark } from './brand';
 
 export function SignIn({ onSignedIn, notice }: { onSignedIn: (session: AuthSession) => void; notice: string }) {
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -44,40 +45,43 @@ export function SignIn({ onSignedIn, notice }: { onSignedIn: (session: AuthSessi
   }
 
   return (
-    <main className="sign-in card" aria-labelledby="sign-in-title">
-      <h1 id="sign-in-title">Войти в «Пункт»</h1>
-      {notice && <p className="sign-in-notice" role="status">{notice}</p>}
-      {error && <p className="error" role="alert">{error}</p>}
-      {loading ? <p role="status">Загружаю аккаунты…</p> : accounts.length ? (
-        <form onSubmit={submit} className="sign-in-form">
-          <fieldset disabled={submitting}>
-            <legend>Выберите аккаунт</legend>
-            {accounts.map((account) => (
-              <label className="account-option" key={account.user_id}>
-                <input name="account" type="radio" value={account.user_id} checked={selectedId === account.user_id}
-                  onChange={() => { setSelectedId(account.user_id); setPassword(''); setError(''); }} />
-                <span>{account.name}</span>
-              </label>
-            ))}
-          </fieldset>
-          {selected?.password_required && (
-            <label className="password-field">Пароль
-              <input type="password" autoComplete="current-password" value={password} required
-                disabled={submitting} onChange={(event) => setPassword(event.target.value)} />
-            </label>
-          )}
-          <button type="submit" className="primary" disabled={submitting || !selected}>
-            {submitting ? 'Вход…' : 'Войти'}
-          </button>
-        </form>
-      ) : (
-        <>
-          {!error && <p>Нет доступных аккаунтов.</p>}
-          <button type="button" className="secondary" onClick={() => {
-            setError(''); setLoading(true); setLoadAttempt((attempt) => attempt + 1);
-          }}>Повторить</button>
-        </>
-      )}
-    </main>
+    <div className="signin-page">
+      <main className="signin surface" aria-labelledby="sign-in-title">
+        <LogoMark />
+        <h1 id="sign-in-title">Вход в Пункт</h1>
+        <p className="sub">Ответы по регламентам с точным пунктом</p>
+        {notice && <p className="notice" role="status">{notice}</p>}
+        {loading ? <p className="notice" role="status">Загружаю аккаунты…</p> : accounts.length ? (
+          <form onSubmit={submit}>
+            <fieldset className="segmented" disabled={submitting}>
+              <legend>Роль</legend>
+              {accounts.map((account) => (
+                <label key={account.user_id}>
+                  <input name="account" type="radio" value={account.user_id} checked={selectedId === account.user_id}
+                    onChange={() => { setSelectedId(account.user_id); setPassword(''); setError(''); }} />
+                  {account.name}
+                </label>
+              ))}
+            </fieldset>
+            {selected?.password_required && (
+              <>
+                <label className="sr-only" htmlFor="sign-in-password">Пароль</label>
+                <input id="sign-in-password" className="field" type="password" autoComplete="current-password" placeholder="Пароль"
+                  value={password} required disabled={submitting} onChange={(event) => setPassword(event.target.value)} />
+              </>
+            )}
+            {error && <p className="alert" role="alert">{error}</p>}
+            <button type="submit" className="submit" disabled={submitting || !selected}>{submitting ? 'Вход…' : 'Войти'}</button>
+          </form>
+        ) : (
+          <>
+            {error ? <p className="alert" role="alert">{error}</p> : <p className="notice">Нет доступных аккаунтов.</p>}
+            <button type="button" className="submit retry" onClick={() => {
+              setError(''); setLoading(true); setLoadAttempt((attempt) => attempt + 1);
+            }}>Повторить</button>
+          </>
+        )}
+      </main>
+    </div>
   );
 }

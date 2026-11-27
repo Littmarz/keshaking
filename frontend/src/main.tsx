@@ -1,8 +1,20 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ApiError, askQuestion, request, type Account, type Answer, type AuthSession, type Citation, type Message, type Session } from './api';
+import '@fontsource/golos-text/400.css';
+import '@fontsource/golos-text/500.css';
+import '@fontsource/golos-text/600.css';
+import '@fontsource/unbounded/400.css';
+import '@fontsource/unbounded/500.css';
+import '@fontsource/unbounded/600.css';
+import '@fontsource/unbounded/700.css';
+import '@fontsource/unbounded/800.css';
+import { ApiError, askQuestion, request, type Account, type AuthSession, type Citation, type Message, type Session } from './api';
+import { AnswerCard, QualityReply, SourceDialog } from './Answer';
+import { assets } from './brand';
+import { KnowledgeBase } from './KnowledgeBase';
 import { MyRequests } from './MyRequests';
 import { QualityDesk } from './QualityDesk';
+import { Sidebar, type Screen } from './Sidebar';
 import { SignIn } from './SignIn';
 import './styles.css';
 
@@ -14,66 +26,7 @@ const fallbackExamples: Example[] = [
   { title: 'Передача в службу качества', question: 'Сколько дней даётся на согласование ТКП с юристами?' },
 ];
 
-const answerLabels = {
-  answered: 'Ответ', partial: 'Частичный ответ', needs_clarification: 'Нужно уточнение',
-  escalated: 'Служба качества', conflict: 'Источники расходятся', refused: 'Недостаточно данных',
-};
-
-function SourceDialog({ source, close }: { source: Citation; close: () => void }) {
-  const ref = useRef<HTMLDialogElement>(null);
-  useEffect(() => { ref.current?.showModal(); }, []);
-  return (
-    <dialog ref={ref} className="source-dialog" onClose={close} aria-labelledby="source-title">
-      <div className="source-inner">
-        <button className="source-close" type="button" onClick={close} aria-label="Закрыть источник">×</button>
-        <p className="eyebrow">{source.source_type === 'qa_entry' ? 'Учебное разъяснение' : `Пункт ${source.section}`}</p>
-        <h2 id="source-title">{source.doc_title}</h2>
-        {source.directorate && <p>{source.directorate}</p>}
-        <blockquote>{source.quote}</blockquote>
-      </div>
-    </dialog>
-  );
-}
-
-function AnswerCard({ result, busy, clarificationActive, ask, openSource, openQueue, ticketPublished }: {
-  result: Answer; busy: boolean; clarificationActive: boolean; ask: (question: string) => void;
-  openSource: (source: Citation) => void; openQueue?: (ticket: string) => void; ticketPublished: boolean;
-}) {
-  const ticketId = result.ticket?.ticket_id;
-  return (
-    <article className={`answer-card answer-${result.status}`} aria-label={answerLabels[result.status]}>
-      <div className="answer-label"><span className="answer-dot" />{answerLabels[result.status]}</div>
-      <p className="answer-text">
-        {result.answer.split(/\[(\d+)\]/g).map((part, index) => {
-          if (index % 2 === 0) return part;
-          const source = result.citations[Number(part) - 1];
-          return source ? <button className="citation-number" type="button" key={index}
-            onClick={() => openSource(source)} aria-label={`Источник ${part}`}>{part}</button> : `[${part}]`;
-        })}
-      </p>
-      {result.citations.length > 0 && <div className="source-links">
-        {result.citations.map((source, index) => (
-          <button className="source-link" type="button" key={`${source.chunk_id}-${index}`} onClick={() => openSource(source)}>
-            <span>{index + 1}</span>{source.doc_title}<span className="arrow-up-right" aria-hidden="true" />
-          </button>
-        ))}
-      </div>}
-      {clarificationActive && result.clarification?.options?.length ? <div className="clarification-options">
-        {result.clarification.options.map((option) => <button type="button" className="secondary" key={option}
-          disabled={busy} onClick={() => ask(option)}>{option}</button>)}
-      </div> : null}
-      {ticketId && (openQueue ? (
-        <button type="button" className="secondary" disabled={busy}
-          onClick={() => openQueue(ticketId)}>Открыть обращение <span className="nowrap">{ticketId}</span></button>
-      ) : (
-        <p className="ticket-status">Обращение {ticketId} · {ticketPublished ? 'Ответ получен' : 'Ожидает ответа'}</p>
-      ))}
-    </article>
-  );
-}
-
 const tokenKey = 'punkt.auth-token';
-const historyDate = new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 
 function loadHistory(token: string, sessionId: string, signal?: AbortSignal) {
   return request<{ messages: Message[] }>(`/chat/sessions/${sessionId}`, token, undefined, signal);
@@ -83,11 +36,59 @@ function newSession(token: string, signal?: AbortSignal) {
   return request<{ session_id: string }>('/chat/sessions', token, {}, signal);
 }
 
-function Workspace({ auth, onExpired }: { auth: AuthSession; onExpired: (token: string) => void }) {
+function Composer({ value, onChange, onSend, busy, disabled, placeholder, enterHint = false, autoFocus = false }: {
+  value: string;
+  onChange: (value: string) => void;
+  onSend: () => void;
+  busy: boolean;
+  disabled?: boolean;
+  placeholder: string;
+  enterHint?: boolean;
+  autoFocus?: boolean;
+}) {
+  const field = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    const element = field.current;
+    if (!element) return;
+    element.style.height = 'auto';
+    element.style.height = `${Math.min(element.scrollHeight, 180)}px`;
+  }, [value]);
+  useEffect(() => { if (autoFocus) field.current?.focus(); }, [autoFocus]);
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    onSend();
+  }
+
+  function shortcut(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+      event.preventDefault();
+      onSend();
+    }
+  }
+
+  return (
+    <form className="composer" onSubmit={submit}>
+      <textarea ref={field} aria-label="Ваш вопрос" value={value} rows={1} maxLength={8000} placeholder={placeholder}
+        disabled={disabled} onChange={(event) => onChange(event.target.value)} onKeyDown={shortcut} />
+      {enterHint && <img className="enter-hint" src={assets.enter} width={32} height={32} alt="" title="Enter — отправить" />}
+      <button className="send" type="submit" disabled={!value.trim() || busy} aria-label="Отправить вопрос">
+        <img src={assets.sendArrow} width={17.25} height={11.05} alt="" />
+      </button>
+    </form>
+  );
+}
+
+function Workspace({ auth, onExpired, onSignOut, signingOut }: {
+  auth: AuthSession;
+  onExpired: (token: string) => void;
+  onSignOut: () => void;
+  signingOut: boolean;
+}) {
   const { token, user } = auth;
   const sessionKey = `punkt.selected-chat.${user.user_id}`;
   const isQuality = user.role === 'quality';
-  const [screen, setScreen] = useState<'chat' | 'quality' | 'requests'>('chat');
+  const [screen, setScreen] = useState<Screen>('chat');
   const [session, setSession] = useState('');
   const [sessions, setSessions] = useState<Session[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -97,14 +98,15 @@ function Workspace({ auth, onExpired }: { auth: AuthSession; onExpired: (token: 
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [step, setStep] = useState('');
   const [error, setError] = useState('');
-  const [historyOpen, setHistoryOpen] = useState(() => !window.matchMedia('(max-width: 720px)').matches);
   const [source, setSource] = useState<Citation | null>(null);
   const [initialTicket, setInitialTicket] = useState<string | null>(null);
   const [examples, setExamples] = useState<Example[]>(fallbackExamples);
+  const [waiting, setWaiting] = useState(0);
   const thread = useRef<HTMLDivElement>(null);
   const publishedTickets = new Set(messages.flatMap((message) => message.role === 'quality' && message.ticket_id ? [message.ticket_id] : []));
   const hasPendingTicket = messages.some(({ result }) => result?.ticket && !publishedTickets.has(result.ticket.ticket_id));
-  const lastMessage = messages.reduce<string | undefined>((last, message) => message.role === 'quality' ? last : message.message_id, undefined);
+  const lastMessage = messages.reduce<Message | undefined>((last, message) => message.role === 'quality' ? last : message, undefined);
+  const clarificationPending = lastMessage?.result?.status === 'needs_clarification';
 
   const reportError = useCallback((cause: unknown, fallback: string) => {
     if (cause instanceof ApiError && cause.status === 401) {
@@ -119,12 +121,13 @@ function Workspace({ auth, onExpired }: { auth: AuthSession; onExpired: (token: 
     async function initialize() {
       try {
         const rows = await request<Session[]>('/chat/sessions', token, undefined, controller.signal);
+        if (controller.signal.aborted) return;
+        setSessions(rows);
         const previousId = sessionStorage.getItem(sessionKey);
-        const selected = rows.find(({ session_id }) => session_id === previousId) ?? rows[0];
+        const selected = rows.find(({ session_id }) => session_id === previousId);
         if (!selected) return;
         const history = await loadHistory(token, selected.session_id, controller.signal);
         if (controller.signal.aborted) return;
-        setSessions(rows);
         setSession(selected.session_id);
         setMessages(history.messages);
       } catch (cause) {
@@ -145,9 +148,18 @@ function Workspace({ auth, onExpired }: { auth: AuthSession; onExpired: (token: 
     return () => controller.abort();
   }, [token]);
 
+  // Счётчик на кнопке «Служба качества» / «Очередь»: обращения, которые ещё ждут ответа.
+  useEffect(() => {
+    const controller = new AbortController();
+    request<{ status: string }[]>(isQuality ? '/tickets?status=open' : '/my/tickets', token, undefined, controller.signal)
+      .then((rows) => setWaiting(rows.filter(({ status }) => status !== 'published').length))
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [token, isQuality, screen, messages.length]);
+
   useEffect(() => {
     if (thread.current && screen === 'chat') thread.current.scrollTop = thread.current.scrollHeight;
-  }, [messages, screen]);
+  }, [messages, screen, step]);
 
   useEffect(() => {
     if (!session || busy || screen !== 'chat' || !hasPendingTicket) return;
@@ -176,14 +188,6 @@ function Workspace({ auth, onExpired }: { auth: AuthSession; onExpired: (token: 
     return () => { controller.abort(); window.clearTimeout(timer); };
   }, [busy, screen, hasPendingTicket, onExpired, session, token]);
 
-  function showChat(id: string, history: Message[]) {
-    setSession(id);
-    sessionStorage.setItem(sessionKey, id);
-    setMessages(history);
-    setQuestion('');
-    setScreen('chat');
-  }
-
   async function selectChat(id: string) {
     if (busy) return;
     if (id === session) { setScreen('chat'); return; }
@@ -192,8 +196,11 @@ function Workspace({ auth, onExpired }: { auth: AuthSession; onExpired: (token: 
     setError('');
     try {
       const history = await loadHistory(token, id);
-      showChat(id, history.messages);
-      if (window.matchMedia('(max-width: 720px)').matches) setHistoryOpen(false);
+      setSession(id);
+      sessionStorage.setItem(sessionKey, id);
+      setMessages(history.messages);
+      setQuestion('');
+      setScreen('chat');
     } catch (cause) {
       reportError(cause, 'Не удалось открыть чат.');
       setScreen('chat');
@@ -203,7 +210,7 @@ function Workspace({ auth, onExpired }: { auth: AuthSession; onExpired: (token: 
     }
   }
 
-  // Чат на сервере создаётся первым вопросом (см. send), поэтому пустые чаты не попадают в историю.
+  // «Задайте вопрос» открывает новый чат. На сервере он создаётся первым вопросом, поэтому пустые чаты не копятся.
   function newChat() {
     if (busy) return;
     setError('');
@@ -220,7 +227,7 @@ function Workspace({ auth, onExpired }: { auth: AuthSession; onExpired: (token: 
     setBusy(true);
     setQuestion('');
     setError('');
-    setStep('Получаю ответ…');
+    setStep('Отправляю вопрос…');
     const temporaryId = `pending-${Date.now()}`;
     setMessages((items) => [...items, { message_id: temporaryId, role: 'user', content: text }]);
     try {
@@ -245,106 +252,78 @@ function Workspace({ auth, onExpired }: { auth: AuthSession; onExpired: (token: 
     }
   }
 
-  function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    void send(question);
+  function navigate(next: Screen) {
+    setInitialTicket(null);
+    setScreen(next);
   }
 
-  function shortcut(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
-      event.preventDefault();
-      void send(question);
-    }
-  }
-
-  function showQueue(ticket: string | null = null) {
+  function openTicket(ticket: string) {
     setInitialTicket(ticket);
     setScreen(isQuality ? 'quality' : 'requests');
   }
 
+  const retry = error && !session && !busy && !messages.length;
+
   return (
-    <>
-      <div className="workspace">
-        <aside className="sidebar">
-          <nav aria-label="Разделы">
-            <button type="button" className="nav-link" aria-current={screen === 'chat' ? 'page' : undefined}
-              onClick={() => setScreen('chat')}><span className="nav-icon chat-icon" aria-hidden="true" />Задать вопрос</button>
-            {isQuality && <button type="button" className="nav-link" aria-current={screen === 'quality' ? 'page' : undefined}
-              onClick={() => showQueue()}><span className="nav-icon queue-icon" aria-hidden="true" />Служба качества</button>}
-            {!isQuality && <button type="button" className="nav-link" aria-current={screen === 'requests' ? 'page' : undefined}
-              onClick={() => showQueue()}><span className="nav-icon queue-icon" aria-hidden="true" />Мои обращения</button>}
-          </nav>
-          <button className="new-chat" type="button" disabled={busy} onClick={newChat}><span aria-hidden="true">+</span> Новый чат</button>
-          <details className="history" open={historyOpen} onToggle={(event) => setHistoryOpen(event.currentTarget.open)}>
-            <summary>История чатов</summary>
-            {sessions.length > 0 ? <ul>
-              {sessions.map((item) => <li key={item.session_id}>
-                <button type="button" disabled={busy} title={item.title || undefined}
-                  aria-current={session === item.session_id && screen === 'chat' ? 'true' : undefined}
-                  onClick={() => void selectChat(item.session_id)}>
-                  <span>{item.title || 'Новый чат'}</span>
-                  <time dateTime={item.created_at}>{historyDate.format(new Date(item.created_at))}</time>
-                </button>
-              </li>)}
-            </ul> : <p>{loadingHistory ? 'Загружаю…' : 'Здесь появятся ваши чаты.'}</p>}
-          </details>
-        </aside>
-        <main className="main">
-          {isQuality && screen === 'quality' ? <QualityDesk token={token} onExpired={onExpired} initialTicket={initialTicket} />
-            : !isQuality && screen === 'requests' ? <MyRequests token={token} onExpired={onExpired} initialTicket={initialTicket}
-              openChat={(id) => void selectChat(id)} /> : (
-            <section className="chat" aria-labelledby="chat-heading">
-              <div className="hero">
-                <h1 id="chat-heading">Ответы по регламентам</h1>
-                <p>Задайте вопрос о рабочем процессе. Если ответ есть в базе, вы увидите точный пункт.</p>
-                <div className="hero-shape" aria-hidden="true"><span /><span /><span /></div>
-              </div>
-              <div className="chat-card card">
-                {error && <p className="error" role="alert">{error}</p>}
-                {loadingHistory && <p className="working" role="status">Загружаю чат…</p>}
-                {error && !session && !busy && <button type="button" className="secondary" onClick={() => {
+    <div className="app">
+      <Sidebar user={user} screen={screen} chatActive={messages.length > 0} waiting={waiting} sessions={sessions}
+        activeSession={session} loadingHistory={loadingHistory} busy={busy} signingOut={signingOut}
+        onAsk={newChat} onNavigate={navigate} onSelectChat={(id) => void selectChat(id)} onSignOut={onSignOut} />
+      <main className="main">
+        {screen === 'quality' && isQuality ? <QualityDesk token={token} onExpired={onExpired} initialTicket={initialTicket} />
+          : screen === 'knowledge' && isQuality ? <KnowledgeBase token={token} onExpired={onExpired} />
+          : screen === 'requests' && !isQuality ? <MyRequests token={token} onExpired={onExpired} initialTicket={initialTicket}
+            openChat={(id) => void selectChat(id)} />
+          : (
+            <section className="chat" aria-label="Чат с помощником">
+              {error && <p className="alert" role="alert">{error}
+                {retry && <> <button type="button" className="link-btn" onClick={() => {
                   setError(''); setBusy(true); setLoadingHistory(true); setLoadAttempt((attempt) => attempt + 1);
-                }}>Обновить историю</button>}
-                {!loadingHistory && !messages.length && <div className="examples">
-                  <h2>Примеры вопросов</h2>
-                  <div className="example-grid">
-                    {examples.map((example) => <button className="example" key={example.question} type="button"
-                      disabled={busy} onClick={() => void send(example.question)}>
-                      <strong>{example.title}</strong><span>{example.question}</span><span className="example-arrow arrow-up-right" aria-hidden="true" />
-                    </button>)}
+                }}>Повторить</button></>}
+              </p>}
+              {!messages.length ? (
+                <div className="empty">
+                  <h1>Чем могу помочь?</h1>
+                  <div className="ask-card surface">
+                    <h2>Примеры запросов</h2>
+                    <div className="examples">
+                      {examples.map((example) => (
+                        <button className="example" key={example.question} type="button" disabled={busy}
+                          onClick={() => void send(example.question)}>
+                          <strong>{example.title}</strong><span>{example.question}</span>
+                          <img src={assets.exampleArrow} width={10.75} height={11.05} alt="" />
+                        </button>
+                      ))}
+                    </div>
+                    <Composer value={question} onChange={setQuestion} onSend={() => void send(question)} busy={busy}
+                      disabled={loadingHistory} placeholder="Например, кто согласует заявку?" enterHint autoFocus />
                   </div>
-                </div>}
-                {messages.length > 0 && <div ref={thread} className="thread" aria-live="polite">
+                  <p className="hint">Задайте вопрос о рабочем процессе. Если ответ есть в базе, вы увидите точный пункт.</p>
+                </div>
+              ) : <>
+                <div ref={thread} className="thread" aria-live="polite">
                   {messages.map((message) => {
-                    if (message.role === 'user') return <p key={message.message_id} className="user-message">{message.content}</p>;
-                    if (message.role === 'quality') return (
-                      <article key={message.message_id} className="answer-card quality-reply" aria-label="Ответ службы качества">
-                        <div className="answer-label"><span className="answer-dot" />Ответ службы качества</div>
-                        {message.ticket_id && <p className="ticket-status">Обращение {message.ticket_id}</p>}
-                        <p className="answer-text">{message.content}</p>
-                      </article>
-                    );
+                    if (message.role === 'user') return <p key={message.message_id} className="msg-user">{message.content}</p>;
+                    if (message.role === 'quality') return <QualityReply key={message.message_id} content={message.content} ticketId={message.ticket_id} />;
                     return message.result ? (
                       <AnswerCard key={message.message_id} result={message.result} busy={busy}
-                        clarificationActive={message.message_id === lastMessage}
-                        ask={(value) => void send(value)} openSource={setSource} openQueue={showQueue}
+                        clarificationActive={message.message_id === lastMessage?.message_id}
+                        ask={(value) => void send(value)} openSource={setSource} openTicket={openTicket}
                         ticketPublished={publishedTickets.has(message.result.ticket?.ticket_id ?? '')} />
-                    ) : <p key={message.message_id}>{message.content}</p>;
+                    ) : <article key={message.message_id} className="answer surface"><p className="answer-text">{message.content}</p></article>;
                   })}
-                </div>}
-                {step && <p className="working" role="status"><span className="live-dot" />{step}</p>}
-                <form className="composer" onSubmit={submit}>
-                  <textarea aria-label="Ваш вопрос" value={question} onChange={(e) => setQuestion(e.target.value)} onKeyDown={shortcut}
-                    placeholder="Например, кто согласует заявку?" rows={2} maxLength={8000} disabled={loadingHistory} />
-                  <button className="primary send" disabled={!question.trim() || busy}>Спросить <span aria-hidden="true">↑</span></button>
-                </form>
-              </div>
+                  {step && <p className="working surface" role="status"><span className="pulse" aria-hidden="true" />{step}</p>}
+                </div>
+                <div className="dock">
+                  <Composer value={question} onChange={setQuestion} onSend={() => void send(question)} busy={busy}
+                    disabled={loadingHistory} placeholder={clarificationPending ? 'Или напишите своими словами…' : 'Спросите ещё…'} />
+                </div>
+              </>}
             </section>
           )}
-        </main>
-      </div>
+      </main>
       {source && <SourceDialog source={source} close={() => setSource(null)} />}
-    </>
+    </div>
   );
 }
 
@@ -394,29 +373,15 @@ function App() {
     }
   }
 
-  return (
-    <div className="site">
-      <header className="topbar">
-        <div className="brand"><span className="brand-mark" aria-hidden="true">П</span><strong>Пункт</strong></div>
-        {auth && <div className="account-bar">
-          <span>{auth.user.name}</span>
-          <button type="button" className="secondary" disabled={signingOut} onClick={() => void signOut()}>Выйти</button>
-        </div>}
-      </header>
-      {restoring ? <main className="sign-in card" role="status">Проверяю вход…</main> : auth ? (
-        <Workspace key={auth.token} auth={auth} onExpired={expire} />
-      ) : <SignIn notice={notice} onSignedIn={(next) => {
-        sessionStorage.setItem(tokenKey, next.token);
-        setAuth(next);
-        setNotice('');
-      }} />}
-      <footer className="build-footer">
-        {import.meta.env.VITE_PUNKT_BUILD_VERSION
-          ? `Сборка ${import.meta.env.VITE_PUNKT_BUILD_VERSION}`
-          : 'Сборка без номера'}
-      </footer>
-    </div>
-  );
+  if (restoring) return <div className="signin-page"><p className="signin surface" role="status">Проверяю вход…</p></div>;
+  if (!auth) {
+    return <SignIn notice={notice} onSignedIn={(next) => {
+      sessionStorage.setItem(tokenKey, next.token);
+      setAuth(next);
+      setNotice('');
+    }} />;
+  }
+  return <Workspace key={auth.token} auth={auth} onExpired={expire} onSignOut={() => void signOut()} signingOut={signingOut} />;
 }
 
 createRoot(document.getElementById('root')!).render(<App />);
