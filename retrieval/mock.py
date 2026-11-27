@@ -401,6 +401,9 @@ def reload() -> None:
 # при реорганизации), а «похожие, но не про это» — нет. Окончательно решает агент (grade моделью).
 LOW_SCORE = float(os.environ.get("LOW_SCORE_THRESHOLD_BM25", "0.25"))
 LOW_COVERAGE = float(os.environ.get("LOW_COVERAGE_THRESHOLD", "0.40"))
+# Гибрид: балл реранкера (0..1). Посторонние вопросы на контрольном наборе ≤ 0.04, но англ. вопрос с ответом — 0.014,
+# поэтому реранкер используется только вместе с лексическим сигналом.
+RERANK_LOW = float(os.environ.get("RERANK_LOW_THRESHOLD", "0.05"))
 # Неоднозначность области: среди top-AMBIG_TOP есть пункты ≥2 областей (дирекция+этап)
 # с баллом не ниже AMBIG_RATIO от лучшего — и при этом в вопросе дирекция не названа.
 AMBIG_TOP = int(os.environ.get("AMBIG_TOP", "8"))
@@ -521,17 +524,27 @@ def search(
     if mode != "bm25" and hits and hits[0].dense_score is not None:
         for h in hits:  # в гибриде финальный score — от реранкера/dense
             h.score = round(h.dense_score, 4)
-    top_i = order[0] if order else None
-    cov = _coverage(idx, q, top_i) if top_i is not None else 0.0
+    # Подсказки считаем по лексической выдаче (BM25): на ней пороги подобраны и проверены (29/29, 4/4).
+    # Реранкер слишком резко отделяет лучший пункт, и правило «близких баллов» на его шкале не работает.
+    bm25_order = [i for _, i in scored]
+    bm25_hits = [Hit(chunk=idx.chunks[i], score=round(bm25[i] / norm, 4)) for i in bm25_order[:AMBIG_TOP]]
+    bm25_top_i = bm25_order[0] if bm25_order else None
+    cov = _coverage(idx, q, bm25_top_i) if bm25_top_i is not None else 0.0
+    bm25_top = bm25_hits[0].score if bm25_hits else 0.0
+    lexical_low = bm25_top < LOW_SCORE or cov < LOW_COVERAGE
     top = hits[0].score if hits else None
-    amb, opts = _ambiguity(hits, scope | _implied_scope(idx, q), bool(doc_ids or directorate))
+    if mode == "bm25":
+        low = lexical_low
+    else:  # гибрид: «ответа нет», только если и реранкер, и слова говорят «мимо» (англ. вопросы реранкер оценивает низко)
+        low = (top is not None and top < RERANK_LOW) and lexical_low
+    amb, opts = _ambiguity(bm25_hits, scope | _implied_scope(idx, q), bool(doc_ids or directorate))
     return SearchResult(
         hits=hits,
         restricted=[{"doc_id": d, "doc_title": t} for d, t in restricted.items()],
         top_score=top,
         expanded_query=eq,
         coverage=cov,
-        low_confidence=(not hits) or (mode == "bm25" and (top < LOW_SCORE or cov < LOW_COVERAGE)),
+        low_confidence=(not hits) or low,
         scope=sorted(scope),
         mode=mode,
         ambiguous_scope=amb,
