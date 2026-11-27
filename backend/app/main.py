@@ -7,6 +7,7 @@ from collections.abc import Iterator
 from contextlib import asynccontextmanager, closing, contextmanager, suppress
 from datetime import UTC, datetime
 from pathlib import Path
+from time import monotonic
 from typing import Annotated
 from uuid import uuid4
 
@@ -26,7 +27,7 @@ from app.agent import (
 )
 from app.mocks.fake_agent import run_mock
 from app.mocks.knowledge import normalized_question
-from app.quality_mail import deliver_mail, employee_address, receive_replies, send_demo_reply
+from app.quality_mail import deliver_mail, employee_address, queue_confirmed_reply, receive_replies, send_demo_reply
 
 
 USERS = {
@@ -35,7 +36,18 @@ USERS = {
 }
 DEFAULT_DB = Path(__file__).resolve().parents[2] / "data" / "processed" / "mock.sqlite3"
 bearer = HTTPBearer(auto_error=False)
-tokens: dict[str, str] = {}
+tokens: dict[str, tuple[str, float]] = {}
+TOKEN_TTL = 8 * 60 * 60
+
+
+def account_password(user_id: str) -> str:
+    return os.environ.get(f"PUNKT_{user_id.upper()}_PASSWORD", "")
+
+
+def validate_account_passwords():
+    employee, quality = (account_password(user_id) for user_id in USERS)
+    if (employee or quality) and (not employee or not quality or employee == quality):
+        raise RuntimeError("Set distinct passwords for both Punkt demo accounts.")
 
 
 @contextmanager
@@ -50,6 +62,7 @@ def database():
 
 @asynccontextmanager
 async def lifespan(_app):
+    validate_account_passwords()
     if os.environ.get("AGENT_MODE", "mock") not in ("mock", "real"):
         raise RuntimeError("AGENT_MODE must be mock or real.")
     with database() as connection:
@@ -80,6 +93,11 @@ async def lifespan(_app):
                 retry_at INTEGER NOT NULL DEFAULT 0,
                 sent_at INTEGER
             );
+            CREATE TABLE IF NOT EXISTS quality_reply_mail (
+                ticket_seq INTEGER PRIMARY KEY REFERENCES tickets(seq),
+                retry_at INTEGER NOT NULL DEFAULT 0,
+                sent_at INTEGER
+            );
         """)
     mail_worker = asyncio.create_task(deliver_mail(database)) if test_mail_enabled() else None
     try:
@@ -106,6 +124,7 @@ app.add_middleware(
 
 class LoginRequest(BaseModel):
     user_id: str
+    password: Annotated[str, StringConstraints(max_length=1024)] = ""
 
 
 class ChatRequest(BaseModel):
@@ -121,11 +140,17 @@ class TicketAnswer(BaseModel):
     stage: str | None = None
 
 
-def current_user(credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)]):
-    user_id = tokens.get(credentials.credentials) if credentials else None
-    if user_id is None:
-        raise HTTPException(401, "Войдите в тестовый аккаунт.", headers={"WWW-Authenticate": "Bearer"})
-    return USERS[user_id]
+Credentials = Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)]
+
+
+def current_user(credentials: Credentials):
+    if credentials:
+        token = credentials.credentials
+        session = tokens.get(token)
+        if session and session[1] > monotonic():
+            return USERS[session[0]]
+        tokens.pop(token, None)
+    raise HTTPException(401, "Войдите в аккаунт.", headers={"WWW-Authenticate": "Bearer"})
 
 
 User = Annotated[dict, Depends(current_user)]
@@ -172,7 +197,7 @@ def readiness():
 
 @app.get("/auth/users")
 def users():
-    return list(USERS.values())
+    return [{**user, "password_required": bool(account_password(user_id))} for user_id, user in USERS.items()]
 
 
 @app.post("/auth/login")
@@ -180,14 +205,28 @@ def login(payload: LoginRequest):
     user = USERS.get(payload.user_id)
     if user is None:
         raise HTTPException(404, "Тестовый аккаунт не найден.")
+    password = account_password(payload.user_id)
+    if password and not secrets.compare_digest(password.encode(), payload.password.encode()):
+        raise HTTPException(401, "Неверный пароль.")
+    now = monotonic()
+    for key, (_, expiry) in tokens.copy().items():
+        if expiry <= now:
+            tokens.pop(key, None)
     token = secrets.token_urlsafe(32)
-    tokens[token] = payload.user_id
+    tokens[token] = (payload.user_id, now + TOKEN_TTL)
     return {"token": token, "user": user}
 
 
 @app.get("/auth/me")
 def me(user: User):
     return user
+
+
+@app.post("/auth/logout")
+def logout(credentials: Credentials):
+    if credentials:
+        tokens.pop(credentials.credentials, None)
+    return {"ok": True}
 
 
 @app.post("/chat/sessions")
@@ -205,7 +244,10 @@ def create_session(user: User):
 def sessions(user: User):
     with database() as connection:
         rows = connection.execute(
-            "SELECT session_id, created_at FROM sessions WHERE user_id = ? ORDER BY created_at DESC",
+            """SELECT s.session_id, s.created_at, (
+                   SELECT substr(m.content, 1, 100) FROM messages m
+                   WHERE m.session_id = s.session_id AND m.role = 'user' ORDER BY m.seq LIMIT 1
+               ) AS title FROM sessions s WHERE s.user_id = ? ORDER BY s.created_at DESC""",
             (user["user_id"],),
         ).fetchall()
     return [dict(row) for row in rows]
@@ -214,15 +256,38 @@ def sessions(user: User):
 @app.get("/chat/sessions/{session_id}")
 def session_messages(session_id: str, user: User):
     with database() as connection:
+        connection.execute("BEGIN")
         require_session(connection, session_id, user["user_id"])
         rows = connection.execute(
             "SELECT message_id, role, content, status, result FROM messages WHERE session_id = ? ORDER BY seq",
             (session_id,),
         ).fetchall()
-    messages = [dict(row) for row in rows]
-    for message in messages:
+        replies = connection.execute(
+            """SELECT q.qa_entry_id, q.answer, t.seq AS ticket_seq
+               FROM tickets AS t JOIN qa_entries AS q ON q.ticket_seq = t.seq
+               WHERE t.session_id = ? AND t.status = 'published' AND q.status = 'confirmed'
+               ORDER BY q.confirmed_at, t.seq""",
+            (session_id,),
+        ).fetchall()
+    replies_by_ticket = {
+        f"Q-{reply['ticket_seq']:04d}": {
+            "message_id": f"quality-{reply['qa_entry_id']}",
+            "role": "quality",
+            "content": reply["answer"],
+            "ticket_id": f"Q-{reply['ticket_seq']:04d}",
+        }
+        for reply in replies
+    }
+    messages = []
+    for row in rows:
+        message = dict(row)
         if message["result"] is not None:
             message["result"] = json.loads(message["result"])
+        messages.append(message)
+        ticket = (message["result"] or {}).get("ticket")
+        if ticket and (reply := replies_by_ticket.pop(ticket["ticket_id"], None)) is not None:
+            messages.append(reply)
+    messages.extend(replies_by_ticket.values())
     return {"session_id": session_id, "messages": messages}
 
 
@@ -446,10 +511,12 @@ def confirm_answer(entry_id: str, user: User):
                 (user["user_id"], datetime.now(UTC).isoformat(), entry_id),
             )
             connection.execute("UPDATE tickets SET status = 'published' WHERE seq = ?", (row["ticket_seq"],))
+            if test_mail_enabled():
+                queue_confirmed_reply(connection, row["ticket_seq"])
         return knowledge_entries(connection, entry_id=entry_id)[0]
 
 
-@app.get("/qa")
+@app.get("/qa", dependencies=[Depends(require_quality)])
 def published_answers(_user: User):
     with database() as connection:
         return knowledge_entries(connection, status="confirmed")

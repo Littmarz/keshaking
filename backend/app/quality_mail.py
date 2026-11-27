@@ -67,7 +67,7 @@ def deliver_next(database) -> None:
         message.set_content(
             f"Обращение {ticket_id}\n\nВопрос сотрудника\n{row['question']}\n\n"
             f"{conflict}"
-            "Ответьте на это письмо простым текстом. Ответ появится в базе «Пункта»."
+            "Ответьте на это письмо простым текстом. Сотрудник получит ответ в чате и на почту."
         )
         try:
             send(message)
@@ -80,12 +80,53 @@ def deliver_next(database) -> None:
         connection.execute("UPDATE quality_mail SET sent_at = unixepoch() WHERE ticket_seq = ?", (row["seq"],))
 
 
+def queue_confirmed_reply(connection, ticket_seq: int) -> None:
+    connection.execute(
+        "INSERT OR IGNORE INTO quality_reply_mail (ticket_seq) VALUES (?)", (ticket_seq,),
+    )
+
+
+def deliver_next_reply(database) -> None:
+    with database() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        row = connection.execute(
+            """SELECT t.seq, t.session_id, t.user_id, q.answer
+               FROM quality_reply_mail AS m JOIN tickets AS t ON t.seq = m.ticket_seq
+               JOIN qa_entries AS q ON q.ticket_seq = m.ticket_seq
+               WHERE m.sent_at IS NULL AND m.retry_at <= unixepoch() AND q.status = 'confirmed'
+               ORDER BY m.retry_at, m.ticket_seq LIMIT 1""",
+        ).fetchone()
+        if row is None:
+            return
+
+        ticket_id = f"Q-{row['seq']:04d}"
+        reference = ticket_reference(row["seq"], row["session_id"])
+        message = EmailMessage()
+        message["From"] = PUNKT_ADDRESS
+        message["To"] = employee_address(row["user_id"])
+        message["Subject"] = f"Пункт: ответ службы качества по обращению {ticket_id}"
+        message["Message-ID"] = f"<{ticket_id}.{row['session_id']}.reply@punkt.demo.invalid>"
+        message["In-Reply-To"] = reference
+        message.set_content(row["answer"])
+        try:
+            send(message)
+        except OSError as exc:
+            logger.warning("Quality reply for %s delayed: %s", ticket_id, type(exc).__name__)
+            connection.execute(
+                "UPDATE quality_reply_mail SET retry_at = unixepoch() + 15 WHERE ticket_seq = ?",
+                (row["seq"],),
+            )
+            return
+        connection.execute(
+            "UPDATE quality_reply_mail SET sent_at = unixepoch() WHERE ticket_seq = ?", (row["seq"],),
+        )
+
+
 def send_demo_reply(ticket, answer: str) -> None:
     """Simulates a plain-text answer from a quality specialist in the local test mailbox."""
     message = EmailMessage()
     message["From"] = QUALITY_ADDRESS
     message["To"] = PUNKT_ADDRESS
-    message["Cc"] = employee_address(ticket["user_id"])
     message["Subject"] = f"Re: Пункт: обращение Q-{ticket['seq']:04d}"
     message["In-Reply-To"] = ticket_reference(ticket["seq"], ticket["session_id"])
     message.set_content(answer)
@@ -101,8 +142,8 @@ def publish_reply(database, raw: bytes) -> None:
         reference = TICKET_REFERENCE.fullmatch(str(message["In-Reply-To"] or ""))
         if sender is None or [a.addr_spec.casefold() for a in sender.addresses] != [QUALITY_ADDRESS] or not reference:
             return
-        recipients = message["To"]
-        if recipients is None or PUNKT_ADDRESS not in {a.addr_spec.casefold() for a in recipients.addresses}:
+        to = {a.addr_spec.casefold() for recipients in message.get_all("To", []) for a in recipients.addresses}
+        if PUNKT_ADDRESS not in to:
             return
         body = message.get_body(preferencelist=("plain",))
         answer = body.get_content().strip() if body else ""
@@ -134,6 +175,7 @@ def publish_reply(database, raw: bytes) -> None:
                  confirmed_by = excluded.confirmed_by, confirmed_at = excluded.confirmed_at""",
             (uuid4().hex, ticket_seq, answer, datetime.now(UTC).isoformat()),
         )
+        queue_confirmed_reply(connection, ticket_seq)
 
 
 def receive_replies(database, seen: set[str]) -> None:
@@ -175,4 +217,5 @@ async def deliver_mail(database) -> None:
             if not mailbox_unavailable:
                 logger.warning("Test mailbox unavailable: %s", type(exc).__name__)
             mailbox_unavailable = True
+        await asyncio.to_thread(deliver_next_reply, database)
         await asyncio.sleep(2)
