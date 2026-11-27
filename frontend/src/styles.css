@@ -15,7 +15,7 @@ body { margin: 0; min-width: 320px; min-height: 100dvh; }
 button, input, textarea { font: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: default; opacity: .55; }
-button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 3px solid #35987c; outline-offset: 3px; }
+button:focus-visible, textarea:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px solid #35987c; outline-offset: 3px; }
 h1, h2, p { margin: 0; }
 
 .site {
@@ -32,13 +32,27 @@ h1, h2, p { margin: 0; }
 }
 .brand { display: inline-flex; align-items: center; gap: 13px; font-size: 26px; letter-spacing: -.05em; }
 .brand-mark {
-  display: inline-grid; place-content: center; gap: 3px; width: 43px; height: 43px; border-radius: 13px;
-  background: linear-gradient(145deg, #24806a, #124d42); box-shadow: inset 0 1px 1px #ffffff70, 0 5px 10px #174f3422;
+  position: relative; display: inline-grid; place-items: center; flex: none;
+  width: 43px; height: 43px; padding-right: 5px; border-radius: 13px;
+  background: var(--jade); color: #e4fff1; font-size: 27px; font-weight: 750; line-height: 1; letter-spacing: 0;
 }
-.brand-mark i { display: block; width: 17px; height: 2px; background: #e4fff1; border-radius: 1px; }
-.brand-mark i:last-child { width: 11px; background: #aff193; }
-.environment { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 650; color: var(--muted); }
+.brand-mark::after { content: ""; position: absolute; right: 7px; bottom: 10px; width: 5px; height: 5px; background: #aff193; border-radius: 50%; }
+.account-bar { display: flex; align-items: center; justify-content: flex-end; gap: 10px; text-align: right; font-size: 14px; color: var(--muted); }
+.account-bar .secondary { min-height: 36px; padding: 6px 11px; }
 .live-dot { width: 8px; height: 8px; border-radius: 50%; background: #287c63; box-shadow: 0 0 0 3px #d8eee4; flex: none; }
+
+.sign-in { width: min(440px, calc(100% - 36px)); margin: clamp(20px, 7vh, 72px) auto; padding: clamp(18px, 4vw, 32px); }
+.sign-in h1 { font-size: clamp(26px, 5vw, 35px); letter-spacing: -.04em; margin-bottom: 16px; }
+.sign-in > .secondary { margin-top: 10px; }
+.sign-in-notice { margin-bottom: 12px; color: var(--muted); }
+.sign-in-form, .password-field { display: grid; gap: 9px; }
+.sign-in-form { gap: 16px; }
+.sign-in-form fieldset { min-width: 0; display: grid; gap: 8px; border: 0; padding: 0; margin: 0; }
+.sign-in-form legend { color: var(--muted); padding: 0 0 8px; font-size: 14px; }
+.account-option { display: flex; align-items: center; min-height: 44px; gap: 10px; padding: 7px 11px; border: 1px solid var(--line); border-radius: 9px; cursor: pointer; }
+.account-option:has(input:checked) { border-color: #a9ccbd; background: #eaf5ee; }
+.account-option input { margin: 0; width: 16px; height: 16px; accent-color: var(--jade); }
+.password-field input { width: 100%; border: 1px solid #cfdfd6; border-radius: 9px; padding: 10px; background: white; color: var(--ink); }
 
 .workspace { display: grid; grid-template-columns: 220px minmax(0, 1fr); width: 100%; max-width: 1480px; margin: 0 auto; padding: 32px clamp(18px, 4vw, 60px) 70px; gap: 24px; }
 .build-footer { align-self: center; margin-top: auto; padding: 0 18px 16px; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
@@ -56,6 +70,18 @@ h1, h2, p { margin: 0; }
 .queue-icon::after { content: ''; position: absolute; left: 3px; right: 3px; top: 4px; height: 2px; border-block: 1px solid currentColor; }
 .new-chat { width: fit-content; padding-inline: 12px; color: var(--jade); }
 .new-chat span { font-size: 22px; line-height: .9; }
+.history { min-width: 0; border-top: 1px solid var(--line); padding: 7px 0 0; }
+.history summary { padding: 8px 11px; border-radius: 9px; color: var(--muted); font-weight: 650; font-size: 14px; cursor: pointer; }
+.history summary:hover { background: #e4f1eb; }
+.history ul { max-height: 18rem; overflow-y: auto; padding: 4px; margin: 3px 0 0; list-style-type: none; scrollbar-width: thin; }
+.history li + li { margin-top: 3px; }
+.history li button { display: grid; gap: 4px; width: 100%; min-width: 0; min-height: 44px; border: 1px solid transparent;
+  border-radius: 9px; padding: 7px 9px; color: var(--ink); background: transparent; text-align: left; font-size: 14px; }
+.history li button:hover { background: #e4f1eb; }
+.history li button[aria-current="true"] { border-color: #c9e1d7; background: #deeee7; color: #0d4f41; }
+.history li span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.history time, .history p { color: var(--muted); font-size: 12px; }
+.history p { padding: 5px 11px; }
 .main { min-width: 0; }
 .chat { max-width: 1120px; }
 
@@ -116,6 +142,9 @@ h1, h2, p { margin: 0; }
 .answer-dot { display: inline-block; width: 7px; height: 7px; flex: none; border-radius: 50%; background: #329571; }
 .answer-escalated .answer-dot, .answer-needs_clarification .answer-dot { background: #b0762c; }
 .answer-text { line-height: 1.55; margin: 8px 0 10px; white-space: pre-wrap; }
+.ticket-status { margin-top: 6px; color: var(--muted); font-size: 13px; }
+.quality-reply { background: #eef8f1; border-color: #cce1d6; }
+.quality-reply .answer-text { margin-bottom: 0; }
 .citation-number { color: #205b4b; background: #dff0e6; padding: 1px 6px; margin-inline: 2px; border: 0; border-radius: 6px; font-size: 13px; font-weight: 720; }
 .source-links, .clarification-options, .review-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .source-link { border: 1px solid #dce9e3; background: #f0f7f3; border-radius: 8px; color: #205344; display: inline-flex; align-items: center; gap: 7px; padding: 6px 9px; text-align: left; font-size: 14px; }
@@ -129,6 +158,9 @@ h1, h2, p { margin: 0; }
 .quality-grid { display: grid; gap: 16px; grid-template-columns: minmax(225px, 1fr) minmax(0, 1.8fr); }
 .queue, .review { padding: 19px; min-width: 0; align-self: start; }
 .queue p { color: var(--muted); line-height: 1.45; }
+.queue-title { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 7px; margin-bottom: 12px; }
+.queue-title h2 { margin: 0; }
+.queue-title .secondary { min-height: 34px; padding: 5px 8px; font-size: 13px; }
 .counter { margin-left: 5px; padding: 2px 7px; background: #e3f1e9; color: #2d644f; border-radius: 6px; font-size: 14px; }
 .ticket-row {
   display: grid; gap: 7px; width: 100%; margin-top: 9px; padding: 11px; text-align: left; color: var(--ink);
@@ -166,6 +198,9 @@ h1, h2, p { margin: 0; }
   .workspace { display: block; padding-top: 12px; }
   .sidebar { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 3px 10px; padding: 0; margin-bottom: 12px; }
   .sidebar nav { display: flex; gap: 4px; }
+  .history { width: 100%; }
+  .history summary { min-height: 42px; padding-top: 11px; }
+  .history ul { max-height: 10rem; }
   .nav-link, .new-chat { font-size: 13px; min-height: 42px; padding: 8px; gap: 5px; }
   .hero { min-height: 179px; border-radius: 18px; }
   .hero h1 { max-width: 87%; }

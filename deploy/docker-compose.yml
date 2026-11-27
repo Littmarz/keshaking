@@ -16,6 +16,8 @@ services:
       KESHAKING_DB_PATH: /var/lib/punkt/mock.sqlite3
       PUNKT_WEB_DIR: /opt/punkt/web
       PUNKT_TEST_MAIL: ${PUNKT_TEST_MAIL:-0}
+      PUNKT_EMPLOYEE_PASSWORD: ${PUNKT_EMPLOYEE_PASSWORD:-}
+      PUNKT_QUALITY_PASSWORD: ${PUNKT_QUALITY_PASSWORD:-}
     ports:
       - "127.0.0.1:${PUNKT_PORT:-8080}:8080"
     volumes:
