@@ -32,11 +32,11 @@ h1, h2, p { margin: 0; }
 }
 .brand { display: inline-flex; align-items: center; gap: 13px; font-size: 26px; letter-spacing: -.05em; }
 .brand-mark {
-  display: inline-grid; place-content: center; gap: 3px; width: 43px; height: 43px; border-radius: 13px;
-  background: linear-gradient(145deg, #24806a, #124d42); box-shadow: inset 0 1px 1px #ffffff70, 0 5px 10px #174f3422;
+  position: relative; display: inline-grid; place-items: center; flex: none;
+  width: 43px; height: 43px; padding-right: 5px; border-radius: 13px;
+  background: var(--jade); color: #e4fff1; font-size: 27px; font-weight: 750; line-height: 1; letter-spacing: 0;
 }
-.brand-mark i { display: block; width: 17px; height: 2px; background: #e4fff1; border-radius: 1px; }
-.brand-mark i:last-child { width: 11px; background: #aff193; }
+.brand-mark::after { content: ""; position: absolute; right: 7px; bottom: 10px; width: 5px; height: 5px; background: #aff193; border-radius: 50%; }
 .account-bar { display: flex; align-items: center; justify-content: flex-end; gap: 10px; text-align: right; font-size: 14px; color: var(--muted); }
 .account-bar .secondary { min-height: 36px; padding: 6px 11px; }
 .live-dot { width: 8px; height: 8px; border-radius: 50%; background: #287c63; box-shadow: 0 0 0 3px #d8eee4; flex: none; }

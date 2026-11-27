@@ -384,7 +384,7 @@ function App() {
   return (
     <div className="site">
       <header className="topbar">
-        <div className="brand"><span className="brand-mark" aria-hidden="true"><i /><i /><i /></span><strong>Пункт</strong></div>
+        <div className="brand"><span className="brand-mark" aria-hidden="true">П</span><strong>Пункт</strong></div>
         {auth && <div className="account-bar">
           <span>{auth.user.name}</span>
           <button type="button" className="secondary" disabled={signingOut} onClick={() => void signOut()}>Выйти</button>
