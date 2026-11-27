@@ -3,10 +3,11 @@
 Нужно: `pip install numpy FlagEmbedding` и модели в `MODELS_DIR` (по умолчанию `models/hf`):
 `models/hf/bge-m3`, `models/hf/bge-reranker-v2-m3` (см. docs/team/2-documents.md, «Модели»).
 Нет пакетов или моделей → `retrieval.mock.search` остаётся на BM25 и пишет предупреждение один раз.
-Принудительно выключить: `RETRIEVAL_MODE=bm25`. Без реранкера: `RERANK=0`.
+Принудительно выключить: `RETRIEVAL_MODE=bm25`. Реранкер: `RERANK=auto` (по умолчанию — только на GPU/MPS,
+на процессоре он стоит ~12 с на вопрос), `RERANK=1` — всегда, `RERANK=0` — никогда.
+Устройство выбирается само (CUDA → Apple MPS → процессор); задать вручную: `EMBED_DEVICE=cpu` / `cuda:0` / `mps`.
 
-⚠️ На машине разработчика 3 нет доступа к PyPI/HF — модуль написан по документации FlagEmbedding,
-но ещё НЕ запускался. Первый запуск на Mac: `python -m eval.run` и сравнить с BM25 (`RETRIEVAL_MODE=bm25`).
+Проверено 28.11 на RTX 4050 (CUDA) и на процессоре: MRR 0.84 → 0.92 против BM25 на контрольном наборе.
 
 Схема: BM25 top-N ∪ dense top-N → RRF (k=60) → реранкер на top-M → порядок.
 Корпус маленький (сотни пунктов), поэтому векторы — в памяти (numpy), без Qdrant; кэш на диске.
@@ -43,19 +44,38 @@ def _model_path(name: str) -> str:
     return f"BAAI/{name}"
 
 
-def _use_fp16() -> bool:
+def _device() -> str:
+    """CUDA → MPS → CPU. Явно, а не на усмотрение FlagEmbedding: при скрытой видеокарте
+    (CUDA_VISIBLE_DEVICES="") torch отвечает «CUDA есть, устройств 0», и FlagEmbedding
+    получает пустой список устройств (ZeroDivisionError) — гибрид молча падал на BM25."""
+    forced = os.environ.get("EMBED_DEVICE")
+    if forced:
+        return forced
     try:
         import torch
-        return bool(torch.cuda.is_available())
-    except Exception:
-        return False
+        if torch.cuda.is_available() and torch.cuda.device_count() > 0:
+            return "cuda:0"
+        if torch.backends.mps.is_available():
+            return "mps"
+    except Exception:  # noqa: BLE001 — нет torch: FlagEmbedding всё равно не загрузится, ошибка будет там
+        pass
+    return "cpu"
+
+
+def _rerank_enabled() -> bool:
+    mode = os.environ.get("RERANK", "auto")
+    return mode == "1" or (mode == "auto" and _device() != "cpu")
+
+
+def _use_fp16() -> bool:
+    return _device().startswith("cuda")
 
 
 def embedder():
     global _embedder
     if _embedder is None:
         from FlagEmbedding import BGEM3FlagModel
-        _embedder = BGEM3FlagModel(_model_path(EMBED_MODEL), use_fp16=_use_fp16())
+        _embedder = BGEM3FlagModel(_model_path(EMBED_MODEL), use_fp16=_use_fp16(), devices=_device())
     return _embedder
 
 
@@ -63,7 +83,7 @@ def reranker():
     global _reranker
     if _reranker is None:
         from FlagEmbedding import FlagReranker
-        _reranker = FlagReranker(_model_path(RERANK_MODEL), use_fp16=_use_fp16())
+        _reranker = FlagReranker(_model_path(RERANK_MODEL), use_fp16=_use_fp16(), devices=_device())
     return _reranker
 
 
@@ -115,7 +135,7 @@ def hybrid_rank(query: str, chunks, bm25_order: list[int], k: int,
         fused[i] = fused.get(i, 0.0) + 1.0 / (RRF_K + rank + 1)
     order = sorted(fused, key=lambda i: -fused[i])
 
-    if os.environ.get("RERANK", "1") != "0":
+    if _rerank_enabled():
         try:
             cand = order[:RERANK_TOP_M]
             scores = reranker().compute_score([[query, _passage(chunks[i])] for i in cand], normalize=True)

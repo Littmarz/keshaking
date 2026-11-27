@@ -160,6 +160,35 @@ def tokenize(text: str) -> list[str]:
     return [_stem(w) for w in _WORD_RE.findall(text) if w.lower() not in _STOP]
 
 
+# Опечатки в вопросе: неизвестное слово (его основы нет в индексе) заменяем словом корпуса на расстоянии 1
+# (замена, пропуск, вставка или перестановка соседних букв). Без этого 1 опечатка роняла recall@5 0.94 → 0.88.
+TYPO_FIX = os.environ.get("TYPO_FIX", "1") != "0"
+TYPO_MIN_LEN = 5  # короче — слишком много соседей («срок» ↔ «срем»), исправления становятся лотереей
+
+
+def _deletes1(word: str) -> set[str]:
+    return {word[:i] + word[i + 1:] for i in range(len(word))}
+
+
+def _within_one_edit(a: str, b: str) -> bool:
+    """Расстояние Дамерау–Левенштейна (OSA) ≤ 1."""
+    if a == b:
+        return True
+    if abs(len(a) - len(b)) > 1:
+        return False
+    i = 0
+    while i < min(len(a), len(b)) and a[i] == b[i]:
+        i += 1
+    if len(a) == len(b):
+        return a[i + 1:] == b[i + 1:] or (
+            i + 1 < len(a) and a[i] == b[i + 1] and a[i + 1] == b[i] and a[i + 2:] == b[i + 2:])
+    return a[i + 1:] == b[i:] if len(a) > len(b) else a[i:] == b[i + 1:]
+
+
+def _typo_candidate(word: str) -> bool:
+    return len(word) >= TYPO_MIN_LEN and not word.isascii() and not word.isdigit()
+
+
 @lru_cache(maxsize=1)
 def _synonyms() -> list[tuple[str, list[str]]]:
     """[(каноническая форма, [алиасы])]"""
@@ -318,9 +347,14 @@ class _Index:
         self.len: list[int] = []
         df: Counter = Counter()
         self.dirs_by_token: dict[str, set[str]] = {}
+        self.words: Counter = Counter()  # словарь корпуса для исправления опечаток
+        self._deletes: dict[str, list[str]] | None = None
         for c in chunks:
             body = " ".join([*c.heading_path[-1:], c.section_title or "", c.text])
-            toks = tokenize(expand(body))
+            expanded = expand(body)
+            toks = tokenize(expanded)
+            self.words.update(w for w in (x.lower().replace("ё", "е") for x in _WORD_RE.findall(expanded))
+                              if _typo_candidate(w))
             tf = Counter(toks)
             self.tf.append(tf)
             self.len.append(len(toks))
@@ -343,6 +377,33 @@ class _Index:
 
     def max_score(self, q: list[str], k1: float = 1.5) -> float:
         return sum(self.idf.get(t, 0.0) * (k1 + 1) for t in set(q)) or 1.0
+
+    def correct(self, word: str) -> str | None:
+        """Самое частое слово корпуса на расстоянии одной правки от word (или None)."""
+        if self._deletes is None:  # строим при первой опечатке: ~150 тыс. ключей, доли секунды
+            deletes: dict[str, list[str]] = {}
+            for w in self.words:
+                for v in _deletes1(w) | {w}:
+                    deletes.setdefault(v, []).append(w)
+            self._deletes = deletes
+        found = {c for v in _deletes1(word) | {word} for c in self._deletes.get(v, ())}
+        found = [c for c in found if _within_one_edit(word, c)]
+        return max(found, key=lambda c: (self.words[c], c)) if found else None
+
+    def query_tokens(self, text: str) -> list[str]:
+        """Основы слов запроса без повторов; неизвестные слова — с исправлением опечатки."""
+        out: list[str] = []
+        for w in _WORD_RE.findall(text):
+            low = w.lower().replace("ё", "е")
+            if low in _STOP:
+                continue
+            t = _stem(low)
+            if TYPO_FIX and t not in self.df and _typo_candidate(low):
+                fixed = self.correct(low)
+                if fixed:
+                    t = _stem(fixed)
+            out.append(t)
+        return list(dict.fromkeys(out))
 
 
 _INDEX: _Index | None = None
@@ -472,7 +533,7 @@ def search(
     idx = _index()
     scope, stripped = detect_directorates(query)
     eq = expand(stripped, skip=_DIRECTORATE_CANON)
-    q = list(dict.fromkeys(tokenize(eq)))  # без повторов, порядок сохраняем
+    q = idx.query_tokens(eq)  # без повторов, порядок сохраняем; опечатки исправлены по словарю корпуса
     norm = idx.max_score(q)
     scored: list[tuple[float, int]] = []
     restricted: dict[str, str] = {}
@@ -533,7 +594,7 @@ def search(
     bm25_top = bm25_hits[0].score if bm25_hits else 0.0
     lexical_low = bm25_top < LOW_SCORE or cov < LOW_COVERAGE
     top = hits[0].score if hits else None
-    if mode == "bm25":
+    if mode != "hybrid+rerank":  # BM25 или гибрид без реранкера: у косинуса dense другая шкала, порог RERANK_LOW к нему не применим
         low = lexical_low
     else:  # гибрид: «ответа нет», только если и реранкер, и слова говорят «мимо» (англ. вопросы реранкер оценивает низко)
         low = (top is not None and top < RERANK_LOW) and lexical_low

@@ -95,6 +95,45 @@ class TestContextAndSynonyms(unittest.TestCase):
         self.assertNotIn("Программное обеспечение", mock.search("Можно ли начать работы по проекту без договора?").expanded_query)
         self.assertIn("Программное обеспечение", mock.search("Кто готовит спецификацию на ПО?").expanded_query)
 
+    def test_typos_find_the_same_clause(self):
+        def top(query):
+            return mock.search(query, k=3).hits[0].chunk.chunk_id
+
+        self.assertEqual(top("Кто назанчает руокводителя проекта в дирекции ИБ?"),
+                         top("Кто назначает руководителя проекта в дирекции ИБ?"))
+
+    def test_unknown_words_are_not_corrected_into_corpus(self):
+        idx = mock._index()
+        for word in ("погода", "парковка", "биткоин", "дресскод"):
+            self.assertEqual(idx.query_tokens(word), [mock._stem(word)], word)
+
+
+class TestTypoDistance(unittest.TestCase):
+    def test_one_edit(self):
+        for a, b in [("назанчает", "назначает"), ("согласовние", "согласование"), ("рукководитель", "руководитель"),
+                     ("руководитель", "руководитель"), ("пректа", "проекта")]:
+            self.assertTrue(mock._within_one_edit(a, b), (a, b))
+        for a, b in [("погода", "повод"), ("abcd", "badc"), ("проект", "проектирование")]:
+            self.assertFalse(mock._within_one_edit(a, b), (a, b))
+
+
+class TestDenseDevice(unittest.TestCase):
+    def test_hidden_gpu_falls_back_to_cpu_without_reranker(self):
+        import os
+        from unittest.mock import patch
+
+        from retrieval import dense
+
+        with patch.dict(os.environ, {"EMBED_DEVICE": "cpu", "RERANK": "auto"}):
+            self.assertEqual(dense._device(), "cpu")
+            self.assertFalse(dense._use_fp16())
+            self.assertFalse(dense._rerank_enabled())
+        with patch.dict(os.environ, {"EMBED_DEVICE": "cuda:0", "RERANK": "auto"}):
+            self.assertTrue(dense._use_fp16())
+            self.assertTrue(dense._rerank_enabled())
+        with patch.dict(os.environ, {"EMBED_DEVICE": "cpu", "RERANK": "1"}):
+            self.assertTrue(dense._rerank_enabled())
+
 
 @unittest.skipUnless(HAVE_DATA, "нет DOCX в data/raw/")
 class TestQaEntries(unittest.TestCase):
