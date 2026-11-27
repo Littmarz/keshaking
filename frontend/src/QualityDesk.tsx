@@ -99,18 +99,30 @@ export function QualityDesk({ initialTicket, token, onExpired }: {
     }
   }
 
-  async function confirm(useTestMail: boolean) {
+  async function confirm() {
     if (!selected?.qa_entry || busy) return;
     setError('');
     setBusy(true);
     try {
-      const path = useTestMail
-        ? `/tickets/${selected.ticket_id}/test-mail-reply`
-        : `/qa/${selected.qa_entry.qa_entry_id}/confirm`;
-      const entry = await request<Entry>(path, token, {});
+      const entry = await request<Entry>(`/qa/${selected.qa_entry.qa_entry_id}/confirm`, token, {});
       updateTicket(entry, 'published');
     } catch (cause) {
       reportError(cause, 'Публикация не удалась.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function sendTestMail() {
+    if (!selected || busy || !answer.trim()) return;
+    setError('');
+    setBusy(true);
+    try {
+      const entry = await request<Entry>(`/tickets/${selected.ticket_id}/test-mail-reply`, token, { answer: answer.trim() });
+      setAnswer(entry.answer);
+      updateTicket(entry, 'answered');
+    } catch (cause) {
+      reportError(cause, 'Тестовый ответ не загрузился.');
     } finally {
       setBusy(false);
     }
@@ -162,7 +174,7 @@ export function QualityDesk({ initialTicket, token, onExpired }: {
             ) : null}
             {selected.status === 'published' ? (
               <div className="published" role="status">
-                <strong>{saved?.confirmed_by === 'quality-mail' ? 'Ответ из письма опубликован' : 'Ответ опубликован'}</strong>
+                <strong>Ответ опубликован</strong>
                 <p>{saved?.answer}</p>
                 <small>Учебное разъяснение службы качества</small>
               </div>
@@ -176,14 +188,16 @@ export function QualityDesk({ initialTicket, token, onExpired }: {
                 </div>
                 <div className="review-actions">
                   <button className="secondary" disabled={busy || !answer.trim() || !hasEdits}>Сохранить черновик</button>
-                  {saved && <button className="primary" type="button" disabled={busy || hasEdits} onClick={() => void confirm(false)}>
+                  {saved && <button className="primary" type="button" disabled={busy || hasEdits} onClick={() => void confirm()}>
                     Подтвердить и опубликовать
                   </button>}
-                  {saved && selected.test_mail && <button className="secondary" type="button" disabled={busy || hasEdits}
-                    onClick={() => void confirm(true)}>Отправить тестовый ответ письмом</button>}
+                  {selected.status === 'open' && selected.test_mail && (
+                    <button className="secondary" type="button" disabled={busy || !answer.trim()}
+                      onClick={() => void sendTestMail()}>Получить черновик из тестового письма</button>
+                  )}
                 </div>
                 {saved && <p className="draft-note" role="status">
-                  После публикации сотрудник увидит ответ в исходном чате.
+                  После подтверждения сотрудник увидит ответ в исходном чате.
                 </p>}
               </form>
             )}

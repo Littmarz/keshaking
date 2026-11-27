@@ -80,6 +80,22 @@ class DemoAccountTests(unittest.TestCase):
         self.assertEqual(main.my_tickets(employee)[0]["answer"], "Черновик эксперта")
         self.assertEqual(main.my_tickets(quality), [])
 
+    def test_startup_and_login_reject_empty_passwords(self):
+        async def initialize():
+            async with main.lifespan(main.app):
+                self.fail("Startup accepted an unsafe configuration")
+
+        with patch.dict(os.environ, {"PUNKT_EMPLOYEE_PASSWORD": "", "PUNKT_QUALITY_PASSWORD": ""}):
+            with self.assertRaisesRegex(RuntimeError, "distinct passwords"):
+                asyncio.run(initialize())
+            with self.assertRaises(HTTPException) as denied:
+                main.login(main.LoginRequest(user_id="quality"))
+            self.assertEqual(denied.exception.status_code, 401)
+
+        with patch.dict(os.environ, {"PUNKT_TEST_MAIL": "1", "PUNKT_MAIL_PASSWORD": ""}):
+            with self.assertRaisesRegex(RuntimeError, "PUNKT_MAIL_PASSWORD"):
+                asyncio.run(initialize())
+
     def test_partial_or_shared_password_configuration_fails(self):
         for invalid_password in ("", os.environ["PUNKT_EMPLOYEE_PASSWORD"]):
             with self.subTest(invalid_password=invalid_password), patch.dict(

@@ -19,8 +19,10 @@ backend/
 
 ## Запуск (после 26.11)
 
+Задайте разные `PUNKT_EMPLOYEE_PASSWORD` и `PUNKT_QUALITY_PASSWORD` в окружении.
+Из папки `backend/` выполните:
+
 ```bash
-cp .env.example .env
 uv run uvicorn app.main:app --reload --port 8000
 # http://localhost:8000/docs
 ```

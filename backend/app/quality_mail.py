@@ -3,8 +3,8 @@ import json
 import logging
 import os
 import re
+from base64 import b64encode
 from contextlib import closing
-from datetime import UTC, datetime
 from email import policy
 from email.errors import MessageError
 from email.message import EmailMessage
@@ -12,15 +12,16 @@ from email.parser import BytesParser
 from smtplib import SMTP
 from urllib.error import HTTPError
 from urllib.parse import urlencode
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 from uuid import uuid4
 
 
 logger = logging.getLogger(__name__)
 PUNKT_ADDRESS = "punkt@demo.invalid"
 QUALITY_ADDRESS = "quality@demo.invalid"
-TICKET_REFERENCE = re.compile(r"<Q-([0-9]{4,18})\.([0-9a-f]{32})@punkt\.demo\.invalid>")
+TICKET_REFERENCE = re.compile(r"<Q-([0-9]{4,18})\.([0-9a-f]{64})@punkt\.demo\.invalid>")
 MAILPIT_ID = re.compile(r"[a-zA-Z0-9_-]+")
+MAILPIT_USER = "punkt"
 PAGE_SIZE = 50
 MAX_MAIL_BYTES = 128 * 1024
 MAIL_RESERVATION_SECONDS = 60
@@ -31,14 +32,33 @@ def employee_address(user_id: str) -> str:
     return f"{user_id}@demo.invalid"
 
 
-def ticket_reference(ticket_seq: int, session_id: str) -> str:
-    return f"<Q-{ticket_seq:04d}.{session_id}@punkt.demo.invalid>"
+def ticket_reference(ticket_seq: int, token: str) -> str:
+    return f"<Q-{ticket_seq:04d}.{token}@punkt.demo.invalid>"
+
+
+def copy_reference(ticket_id: str) -> str:
+    return f"<{ticket_id}.notice@punkt.demo.invalid>"
+
+
+def mailpit_password() -> str:
+    password = os.environ.get("PUNKT_MAIL_PASSWORD", "")
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", password):
+        raise RuntimeError("Set PUNKT_MAIL_PASSWORD using letters, digits, hyphens or underscores.")
+    return password
+
+
+def open_mailpit(url: str):
+    credentials = b64encode(f"{MAILPIT_USER}:{mailpit_password()}".encode()).decode()
+    request = Request(url)
+    request.add_unredirected_header("Authorization", f"Basic {credentials}")
+    return urlopen(request, timeout=2)
 
 
 def send(message: EmailMessage) -> None:
     host = os.environ.get("PUNKT_MAIL_SMTP_HOST", "mailpit")
     port = int(os.environ.get("PUNKT_MAIL_SMTP_PORT", "1025"))
     with closing(SMTP(host, port, timeout=2)) as smtp:
+        smtp.login(MAILPIT_USER, mailpit_password())
         smtp.send_message(message)
 
 
@@ -75,9 +95,8 @@ def ticket_message(row, ticket_id: str) -> EmailMessage:
     message = EmailMessage()
     message["From"] = PUNKT_ADDRESS
     message["To"] = QUALITY_ADDRESS
-    message["Cc"] = employee_address(row["user_id"])
     message["Subject"] = f"Пункт: обращение {ticket_id}"
-    message["Message-ID"] = ticket_reference(row["seq"], row["session_id"])
+    message["Message-ID"] = ticket_reference(row["seq"], row["reply_token"])
     context = json.loads(row["context"])
     conflict = ""
     if sources := context.get("conflict_sources"):
@@ -86,7 +105,7 @@ def ticket_message(row, ticket_id: str) -> EmailMessage:
     message.set_content(
         f"Обращение {ticket_id}\n\nВопрос сотрудника\n{row['question']}\n\n"
         f"{conflict}"
-        "Ответьте на это письмо простым текстом. Сотрудник получит ответ в чате и на почту."
+        "Ответьте на письмо простым текстом, затем проверьте и подтвердите черновик в кабинете службы качества."
     )
     return message
 
@@ -94,11 +113,37 @@ def ticket_message(row, ticket_id: str) -> EmailMessage:
 def deliver_next(database) -> None:
     deliver_queued_mail(
         database, "quality_mail",
-        """SELECT t.seq, t.question, t.session_id, t.user_id, t.context
+        """SELECT t.seq, t.question, t.context, m.reply_token
            FROM quality_mail AS m JOIN tickets AS t ON t.seq = m.ticket_seq
-           WHERE m.sent_at IS NULL AND m.retry_at <= unixepoch()
+           WHERE m.sent_at IS NULL AND m.retry_at <= unixepoch() AND m.reply_token IS NOT NULL
            ORDER BY m.retry_at, t.seq LIMIT 1""",
         ticket_message,
+    )
+
+
+def ticket_copy_message(row, ticket_id: str) -> EmailMessage:
+    message = EmailMessage()
+    message["From"] = PUNKT_ADDRESS
+    message["To"] = employee_address(row["user_id"])
+    message["Subject"] = f"Пункт: уведомление об обращении {ticket_id}"
+    message["Message-ID"] = copy_reference(ticket_id)
+    message.set_content(
+        f"Обращение {ticket_id} направлено в службу качества.\n\n"
+        f"Вопрос сотрудника\n{row['question']}\n\n"
+        "Подтверждённый ответ появится в чате и придёт в отдельном письме."
+    )
+    return message
+
+
+def deliver_next_copy(database) -> None:
+    deliver_queued_mail(
+        database, "quality_mail_copy",
+        """SELECT t.seq, t.question, t.user_id
+           FROM quality_mail_copy AS m JOIN tickets AS t ON t.seq = m.ticket_seq
+           JOIN quality_mail AS original ON original.ticket_seq = m.ticket_seq
+           WHERE m.sent_at IS NULL AND m.retry_at <= unixepoch() AND original.sent_at IS NOT NULL
+           ORDER BY m.retry_at, t.seq LIMIT 1""",
+        ticket_copy_message,
     )
 
 
@@ -113,8 +158,8 @@ def reply_message(row, ticket_id: str) -> EmailMessage:
     message["From"] = PUNKT_ADDRESS
     message["To"] = employee_address(row["user_id"])
     message["Subject"] = f"Пункт: ответ службы качества по обращению {ticket_id}"
-    message["Message-ID"] = f"<{ticket_id}.{row['session_id']}.reply@punkt.demo.invalid>"
-    message["In-Reply-To"] = ticket_reference(row["seq"], row["session_id"])
+    message["Message-ID"] = f"<{ticket_id}.reply@punkt.demo.invalid>"
+    message["In-Reply-To"] = copy_reference(ticket_id)
     message.set_content(row["answer"])
     return message
 
@@ -122,7 +167,7 @@ def reply_message(row, ticket_id: str) -> EmailMessage:
 def deliver_next_reply(database) -> None:
     deliver_queued_mail(
         database, "quality_reply_mail",
-        """SELECT t.seq, t.session_id, t.user_id, q.answer
+        """SELECT t.seq, t.user_id, q.answer
            FROM quality_reply_mail AS m JOIN tickets AS t ON t.seq = m.ticket_seq
            JOIN qa_entries AS q ON q.ticket_seq = m.ticket_seq
            WHERE m.sent_at IS NULL AND m.retry_at <= unixepoch() AND q.status = 'confirmed'
@@ -131,18 +176,18 @@ def deliver_next_reply(database) -> None:
     )
 
 
-def send_demo_reply(ticket, answer: str) -> None:
+def send_demo_reply(ticket_seq: int, reply_token: str, answer: str) -> None:
     """Simulates a plain-text answer from a quality specialist in the local test mailbox."""
     message = EmailMessage()
     message["From"] = QUALITY_ADDRESS
     message["To"] = PUNKT_ADDRESS
-    message["Subject"] = f"Re: Пункт: обращение Q-{ticket['seq']:04d}"
-    message["In-Reply-To"] = ticket_reference(ticket["seq"], ticket["session_id"])
+    message["Subject"] = f"Re: Пункт: обращение Q-{ticket_seq:04d}"
+    message["In-Reply-To"] = ticket_reference(ticket_seq, reply_token)
     message.set_content(answer)
     send(message)
 
 
-def publish_reply(database, raw: bytes) -> None:
+def draft_reply(database, raw: bytes) -> None:
     if len(raw) > MAX_MAIL_BYTES:
         return
     try:
@@ -161,30 +206,18 @@ def publish_reply(database, raw: bytes) -> None:
     if not 1 <= len(answer) <= 8000:
         return
 
-    ticket_seq, session_id = int(reference[1]), reference[2]
+    ticket_seq, token = int(reference[1]), reference[2]
     with database() as connection:
         connection.execute("BEGIN IMMEDIATE")
-        updated = connection.execute(
-            """UPDATE tickets SET status = 'published'
-               WHERE seq = ? AND session_id = ? AND status IN ('open', 'answered')
-                 AND EXISTS (SELECT 1 FROM quality_mail WHERE ticket_seq = tickets.seq AND sent_at IS NOT NULL)""",
-            (ticket_seq, session_id),
+        inserted = connection.execute(
+            """INSERT INTO qa_entries (qa_entry_id, ticket_seq, answer)
+               SELECT ?, t.seq, ? FROM tickets AS t JOIN quality_mail AS m ON m.ticket_seq = t.seq
+               WHERE t.seq = ? AND t.status = 'open' AND m.reply_token = ?
+               ON CONFLICT (ticket_seq) DO NOTHING""",
+            (uuid4().hex, answer, ticket_seq, token),
         )
-        if updated.rowcount != 1:
-            return
-        connection.execute(
-            """INSERT INTO qa_entries (qa_entry_id, ticket_seq, answer, status, confirmed_by, confirmed_at)
-               VALUES (?, ?, ?, 'confirmed', 'quality-mail', ?)
-               ON CONFLICT (ticket_seq) DO UPDATE SET
-                 doc_id = CASE WHEN qa_entries.answer = excluded.answer THEN qa_entries.doc_id END,
-                 section = CASE WHEN qa_entries.answer = excluded.answer THEN qa_entries.section END,
-                 directorate = CASE WHEN qa_entries.answer = excluded.answer THEN qa_entries.directorate END,
-                 stage = CASE WHEN qa_entries.answer = excluded.answer THEN qa_entries.stage END,
-                 answer = excluded.answer, status = excluded.status,
-                 confirmed_by = excluded.confirmed_by, confirmed_at = excluded.confirmed_at""",
-            (uuid4().hex, ticket_seq, answer, datetime.now(UTC).isoformat()),
-        )
-        queue_confirmed_reply(connection, ticket_seq)
+        if inserted.rowcount == 1:
+            connection.execute("UPDATE tickets SET status = 'answered' WHERE seq = ?", (ticket_seq,))
 
 
 def receive_replies(database, seen: set[str]) -> None:
@@ -196,15 +229,15 @@ def receive_replies(database, seen: set[str]) -> None:
             "start": start,
             "limit": PAGE_SIZE,
         })
-        with urlopen(f"{base}/api/v1/search?{query}", timeout=2) as response:
+        with open_mailpit(f"{base}/api/v1/search?{query}") as response:
             messages = json.load(response)["messages"] or []
         for row in reversed(messages):
             message_id = row["ID"]
             if message_id in seen or not MAILPIT_ID.fullmatch(message_id):
                 continue
             try:
-                with urlopen(f"{base}/api/v1/message/{message_id}/raw", timeout=2) as response:
-                    publish_reply(database, response.read(MAX_MAIL_BYTES + 1))
+                with open_mailpit(f"{base}/api/v1/message/{message_id}/raw") as response:
+                    draft_reply(database, response.read(MAX_MAIL_BYTES + 1))
             except HTTPError as exc:
                 if exc.code != 404:
                     raise
@@ -219,6 +252,7 @@ async def deliver_mail(database) -> None:
     mailbox_unavailable = False
     while True:
         await asyncio.to_thread(deliver_next, database)
+        await asyncio.to_thread(deliver_next_copy, database)
         try:
             await asyncio.to_thread(receive_replies, database, seen)
             mailbox_unavailable = False
