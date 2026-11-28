@@ -178,7 +178,7 @@ h1, h2, h3, p { margin: 0; }
 
 .user-wrap { position: relative; flex: none; }
 .user-card { height: 57px; flex: none; display: flex; align-items: center; gap: 11px; padding: 0 12px 0 10px; text-align: left; width: 100%; }
-.avatar { width: 37px; height: 37px; flex: none; border-radius: 4.5px; background: var(--avatar-bg); display: grid; place-items: center; font: 700 14px var(--display); color: var(--avatar-ink); }
+.avatar { width: 37px; height: 37px; flex: none; border-radius: 11px; background: var(--avatar-bg); display: grid; place-items: center; font: 700 14px var(--display); color: var(--avatar-ink); }
 .user-card .who { min-width: 0; flex: 1; }
 .user-card .who strong { display: block; font: 700 13px/1.25 var(--display); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .user-card .who span { display: block; font: 400 11px/1.3 var(--text); }
@@ -293,25 +293,30 @@ button.ticket:hover { border-color: var(--accent-line); }
 .reply-box small { display: block; margin-top: 6px; color: var(--reply-small); font-size: 13px; }
 .empty-note { margin-top: 30px; color: var(--muted); font-size: 16px; }
 
-.quality-layout { display: grid; grid-template-columns: minmax(0, 587px) minmax(0, 485px); gap: 26px; align-items: start; padding-right: 23px; }
+/* Очередь службы качества: как чат — по центру широкого экрана. Форма ответа занимает высоту окна:
+   на большом мониторе поле ответа растягивается до низа, на маленьком сжимается, и кнопки видны без прокрутки. */
+.quality-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(360px, 520px); gap: clamp(20px, 2.4vw, 36px); align-items: start; width: 100%; max-width: 1240px; margin-inline: auto; padding-right: clamp(0px, 1.6vw, 23px); }
 .quality-layout .page { padding-right: 0; }
-.review { position: sticky; top: 0; margin-top: clamp(24px, 6vh, 64px); padding-bottom: 24px; }
-.review-panel { padding: 22px 24px 25px; background: var(--panel); }
+.review { position: sticky; top: 0; margin-top: clamp(24px, 6vh, 64px); padding-bottom: clamp(10px, 2vh, 24px); display: flex; flex-direction: column; max-height: calc(100dvh - 18px - clamp(24px, 6vh, 64px)); }
+.review:has(textarea) { height: calc(100dvh - 18px - clamp(24px, 6vh, 64px)); }
+.review-panel { flex: 0 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; padding: 22px 24px 25px; background: var(--panel); }
+.review:has(textarea) .review-panel { flex: 1 1 auto; }
+.review-actions, .review-note { flex: none; }
 .review-meta { color: var(--faint); font: 500 20px/1.2 var(--text); }
-.review h2 { margin-top: 30px; font: 700 24px/1.25 var(--display); overflow-wrap: anywhere; }
+.review h2 { margin-top: clamp(12px, 2.6vh, 30px); font: 700 24px/1.25 var(--display); overflow-wrap: anywhere; }
 .review-reason { margin-top: 14px; font: 500 20px/1.2 var(--text); }
 .review-reason ul { margin: 8px 0 0; padding-left: 20px; font-size: 16px; }
 .review textarea, .review input {
   width: 100%; border: 1px solid var(--line); border-radius: var(--r-card); background: var(--bg); outline: 0;
   font: 500 16px/1.2 var(--text);
 }
-.review textarea { display: block; min-height: clamp(140px, 30vh, 300px); margin-top: clamp(14px, 2.5vh, 26px); padding: 20px 26px; resize: vertical; }
+.review textarea { display: block; flex: 1 1 auto; min-height: 110px; margin-top: clamp(14px, 2.5vh, 26px); padding: 20px 26px; resize: none; }
 .review textarea:focus, .review input:focus { border-color: var(--accent-line); box-shadow: 0 0 0 3px rgba(78, 55, 234, .12); }
-.review-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 29px; margin-top: 30px; }
+.review-fields { flex: none; display: grid; grid-template-columns: 1fr 1fr; gap: 29px; margin-top: clamp(12px, 2.6vh, 30px); }
 .review-fields label { display: block; }
 .review-fields span { display: block; margin: 0 0 6px 4px; color: var(--muted); font: 500 14px var(--text); }
 .review input { height: 56px; padding: 0 16px; }
-.review-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 31px; margin-top: 18px; }
+.review-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 31px; margin-top: clamp(10px, 1.8vh, 18px); }
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 10px; min-height: 52px; padding: 8px 16px; border: 1px solid var(--line);
   border-radius: var(--r-card); background: var(--bg); box-shadow: var(--shadow); font: 800 13px/1.2 var(--display); color: var(--btn-ink); text-align: left;
@@ -383,7 +388,8 @@ button.ticket:hover { border-color: var(--accent-line); }
 
 @media (max-width: 1180px) {
   .quality-layout { grid-template-columns: minmax(0, 1fr); }
-  .review { position: static; margin: 0 39px 40px 15px; }
+  .review, .review:has(textarea) { position: static; height: auto; max-height: none; margin: 0 39px 40px 15px; }
+  .review textarea { min-height: clamp(140px, 30vh, 300px); resize: vertical; }
   .examples { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 /* Телефон: на экране только «≡» и «+», сайдбар — выдвижная панель слева, как на компьютере. */
@@ -430,7 +436,7 @@ button.ticket:hover { border-color: var(--accent-line); }
   .ticket { padding: 14px 16px; }
   .ticket-head { flex-wrap: wrap; gap: 10px; }
   .reply-box { margin-left: 0; }
-  .review { margin: 0 0 32px; }
+  .review, .review:has(textarea) { margin: 0 0 32px; }
   .review-actions, .review-fields { grid-template-columns: 1fr; gap: 12px; }
 }
 
