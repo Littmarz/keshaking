@@ -157,9 +157,11 @@ function Workspace({ auth, onExpired, onSignOut, signingOut }: {
     return () => controller.abort();
   }, [token, isQuality, screen, messages.length]);
 
+  // Лента сама листается к последнему сообщению; поле ввода закреплено под ней и не двигается.
   useEffect(() => {
-    if (thread.current && screen === 'chat') thread.current.scrollTop = thread.current.scrollHeight;
-  }, [messages, screen, step]);
+    const element = thread.current;
+    if (element && screen === 'chat') element.scrollTo({ top: element.scrollHeight, behavior: loadingHistory ? 'auto' : 'smooth' });
+  }, [messages, screen, step, loadingHistory]);
 
   useEffect(() => {
     if (!session || busy || screen !== 'chat' || !hasPendingTicket) return;
@@ -296,7 +298,7 @@ function Workspace({ auth, onExpired, onSignOut, signingOut }: {
                       ))}
                     </div>
                     <Composer value={question} onChange={setQuestion} onSend={() => void send(question)} busy={busy}
-                      disabled={loadingHistory} placeholder="Например, кто согласует заявку?" enterHint autoFocus />
+                      disabled={loadingHistory} placeholder="Например, кто согласует заявку?" autoFocus />
                   </div>
                   <p className="hint">Задайте вопрос о рабочем процессе. Если ответ есть в базе, вы увидите точный пункт.</p>
                 </div>

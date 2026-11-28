@@ -110,7 +110,9 @@ export function SourceDialog({ source, close }: { source: Citation; close: () =>
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => { ref.current?.showModal(); }, []);
   return (
-    <dialog ref={ref} className="source-dialog" onClose={close} aria-labelledby="source-title">
+    <dialog ref={ref} className="source-dialog" onClose={close} aria-labelledby="source-title"
+      onCancel={(event) => { event.preventDefault(); close(); }}
+      onClick={(event) => { if (event.target === event.currentTarget) close(); }}>
       <div className="source-inner">
         <button className="source-close" type="button" onClick={close} aria-label="Закрыть источник"><XIcon size={18} /></button>
         <p className="eyebrow">{source.source_type === 'qa_entry' ? 'Разъяснение службы качества' : `Пункт ${source.section}`}</p>

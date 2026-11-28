@@ -75,7 +75,8 @@ export function Sidebar({
   onSignOut: () => void;
 }) {
   const isQuality = user.role === 'quality';
-  const askIsPrimary = !isQuality || screen === 'chat';
+  // Яркая «Задайте вопрос» — только в чате; в службе качества и базе знаний она обычная, чтобы не спорить с текущим разделом.
+  const askIsPrimary = screen === 'chat';
   const [historyOpen, setHistoryOpen] = useState(false);  // на телефоне история свёрнута, чтобы чат был на первом экране
   return (
     <aside className="sidebar" aria-label="Навигация">

@@ -48,9 +48,10 @@ h1, h2, h3, p { margin: 0; }
 .surface { background: var(--bg); border: 1px solid var(--line); border-radius: var(--r-card); box-shadow: var(--shadow); }
 
 /* ---------- каркас ---------- */
-.app { display: grid; grid-template-columns: 251px minmax(0, 1fr); column-gap: 40px; padding: 9px 14px; min-height: 100vh; }
-.sidebar { position: sticky; top: 9px; height: calc(100vh - 18px); min-height: 640px; display: flex; flex-direction: column; gap: 9px; }
-.main { min-width: 0; display: flex; flex-direction: column; min-height: calc(100vh - 18px); }
+/* Приложение ровно в высоту окна: прокручиваются лента чата, списки и история, но не страница целиком. */
+.app { display: grid; grid-template-columns: clamp(220px, 18vw, 251px) minmax(0, 1fr); column-gap: clamp(16px, 2.6vw, 40px); padding: 9px 14px; height: 100vh; height: 100dvh; overflow: hidden; }
+.sidebar { height: 100%; min-height: 0; display: flex; flex-direction: column; gap: 9px; }
+.main { min-width: 0; min-height: 0; height: 100%; display: flex; flex-direction: column; overflow-y: auto; }
 
 .brand-card { height: 57px; flex: none; display: flex; align-items: center; gap: 13px; padding: 0 20px; }
 .brand-name { font: 500 24px/1 var(--display); letter-spacing: -.01em; }
@@ -107,12 +108,12 @@ h1, h2, h3, p { margin: 0; }
 .user-menu small { padding: 4px 10px 2px; color: var(--muted); font-size: 12px; }
 
 /* ---------- чат ---------- */
-.chat { flex: 1; display: flex; flex-direction: column; min-height: 0; height: calc(100vh - 18px); padding-right: 39px; }
-.thread { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 46px; padding: 79px 4px 30px 15px; }
-.dock { flex: none; padding: 12px 0 33px; }
+.chat { flex: 1; display: flex; flex-direction: column; min-height: 0; padding-right: clamp(0px, 2.7vw, 39px); }
+.thread { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: clamp(20px, 4.5vh, 46px); padding: clamp(20px, 7.5vh, 79px) 4px 24px 15px; }
+.dock { flex: none; padding: 10px 0 clamp(10px, 3.2vh, 33px); }
 
-.empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px 0 96px; }
-.empty h1 { font: 700 36px/1.25 var(--display); text-align: center; margin-bottom: 15px; }
+.empty { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: clamp(12px, 4vh, 40px) 0 clamp(12px, 9vh, 96px); }
+.empty h1 { font: 700 clamp(24px, 4.4vh, 36px)/1.25 var(--display); text-align: center; margin-bottom: clamp(8px, 1.5vh, 15px); }
 .ask-card { width: min(846px, 100%); padding: 12px 24px 24px; border-width: 1.12px; }
 .ask-card h2 { font: 600 16px/1.25 var(--text); color: var(--ink-soft); margin-bottom: 12px; }
 .examples { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 21px; margin-bottom: 31px; }
@@ -191,7 +192,7 @@ h1, h2, h3, p { margin: 0; }
 .chat > .alert { margin: 16px 0 0 15px; }
 
 /* ---------- страницы: мои обращения, очередь, база знаний ---------- */
-.page { padding: 79px 39px 40px 15px; }
+.page { padding: clamp(24px, 7.5vh, 79px) clamp(0px, 2.7vw, 39px) 40px 15px; }
 .page h1 { font: 700 40px/1.15 var(--display); letter-spacing: -.01em; }
 .lead { margin-top: 10px; font: 500 18px/1.3 var(--text); }
 .filters { display: flex; flex-wrap: wrap; gap: 12px 37px; margin-top: 18px; }
@@ -212,7 +213,7 @@ button.ticket:hover { border-color: var(--accent-line); }
 
 .quality-layout { display: grid; grid-template-columns: minmax(0, 587px) minmax(0, 485px); gap: 26px; align-items: start; padding-right: 23px; }
 .quality-layout .page { padding-right: 0; }
-.review { position: sticky; top: 64px; margin-top: 64px; }
+.review { position: sticky; top: 0; margin-top: clamp(24px, 6vh, 64px); padding-bottom: 24px; }
 .review-panel { padding: 22px 24px 25px; background: var(--panel); }
 .review-meta { color: var(--faint); font: 500 20px/1.2 var(--text); }
 .review h2 { margin-top: 30px; font: 700 24px/1.25 var(--display); overflow-wrap: anywhere; }
@@ -222,7 +223,7 @@ button.ticket:hover { border-color: var(--accent-line); }
   width: 100%; border: 1px solid var(--line); border-radius: var(--r-card); background: var(--bg); outline: 0;
   font: 500 16px/1.2 var(--text);
 }
-.review textarea { display: block; min-height: 300px; margin-top: 26px; padding: 20px 26px; resize: vertical; }
+.review textarea { display: block; min-height: clamp(140px, 30vh, 300px); margin-top: clamp(14px, 2.5vh, 26px); padding: 20px 26px; resize: vertical; }
 .review textarea:focus, .review input:focus { border-color: var(--accent-line); box-shadow: 0 0 0 3px rgba(78, 55, 234, .12); }
 .review-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 29px; margin-top: 30px; }
 .review-fields label { display: block; }
@@ -274,14 +275,32 @@ button.ticket:hover { border-color: var(--accent-line); }
 .mobile-only { display: none !important; }
 
 /* ---------- узкие экраны ---------- */
+/* Невысокие экраны (ноутбук, масштаб браузера 125–150 %): ужимаем сайдбар и пустой экран. */
+@media (max-height: 760px) and (min-width: 861px) {
+  .inside-card { display: none; }
+  .brand-card { height: 50px; }
+  .nav-btn { height: 46px; }
+  .history { margin-top: 16px; }
+  .user-card { height: 52px; }
+  .example { min-height: 84px; }
+  .examples { margin-bottom: 18px; gap: 14px; }
+  .ask-card { padding: 10px 18px 18px; }
+}
+@media (max-height: 600px) and (min-width: 861px) {
+  .empty .hint { display: none; }
+  .example { min-height: 0; padding-block: 9px; }
+  .examples { margin-bottom: 12px; }
+}
+
 @media (max-width: 1180px) {
   .quality-layout { grid-template-columns: minmax(0, 1fr); }
   .review { position: static; margin: 0 39px 40px 15px; }
   .examples { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 860px) {
-  .app { display: block; padding: 8px 10px 0; }
-  .sidebar { position: static; height: auto; min-height: 0; gap: 8px; }
+  .app { display: block; height: auto; overflow: visible; padding: 8px 10px 0; }
+  .main { height: auto; overflow: visible; }
+  .sidebar { height: auto; gap: 8px; }
   .brand-card { height: 50px; }
   .nav-panel { padding: 10px; }
   .nav { flex-direction: row; }
