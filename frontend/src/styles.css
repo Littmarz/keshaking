@@ -299,23 +299,23 @@ button.ticket:hover { border-color: var(--accent-line); }
 .quality-layout .page { padding-right: 0; }
 .review { position: sticky; top: 0; margin-top: clamp(24px, 6vh, 64px); padding-bottom: clamp(10px, 2vh, 24px); display: flex; flex-direction: column; max-height: calc(100dvh - 18px - clamp(24px, 6vh, 64px)); }
 .review:has(textarea) { height: calc(100dvh - 18px - clamp(24px, 6vh, 64px)); }
-.review-panel { flex: 0 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; padding: 22px 24px 25px; background: var(--panel); }
+.review-panel { flex: 0 1 auto; min-height: 0; overflow-y: auto; scrollbar-width: thin; display: flex; flex-direction: column; padding: clamp(16px, 2.4vh, 22px) 24px clamp(18px, 2.6vh, 25px); background: var(--panel); }
 .review:has(textarea) .review-panel { flex: 1 1 auto; }
 .review-actions, .review-note { flex: none; }
-.review-meta { color: var(--faint); font: 500 20px/1.2 var(--text); }
-.review h2 { margin-top: clamp(12px, 2.6vh, 30px); font: 700 24px/1.25 var(--display); overflow-wrap: anywhere; }
-.review-reason { margin-top: 14px; font: 500 20px/1.2 var(--text); }
+.review-meta { color: var(--faint); font: 500 15px/1.3 var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.review h2 { margin-top: clamp(10px, 2vh, 22px); font: 700 clamp(18px, 2.9vh, 24px)/1.25 var(--display); overflow-wrap: anywhere; }
+.review-reason { margin-top: clamp(8px, 1.4vh, 14px); font: 500 clamp(15px, 2.3vh, 18px)/1.3 var(--text); }
 .review-reason ul { margin: 8px 0 0; padding-left: 20px; font-size: 16px; }
 .review textarea, .review input {
   width: 100%; border: 1px solid var(--line); border-radius: var(--r-card); background: var(--bg); outline: 0;
   font: 500 16px/1.2 var(--text);
 }
-.review textarea { display: block; flex: 1 1 auto; min-height: 110px; margin-top: clamp(14px, 2.5vh, 26px); padding: 20px 26px; resize: none; }
+.review textarea { display: block; flex: 1 1 auto; min-height: 84px; margin-top: clamp(14px, 2.5vh, 26px); padding: 20px 26px; resize: none; }
 .review textarea:focus, .review input:focus { border-color: var(--accent-line); box-shadow: 0 0 0 3px rgba(78, 55, 234, .12); }
-.review-fields { flex: none; display: grid; grid-template-columns: 1fr 1fr; gap: 29px; margin-top: clamp(12px, 2.6vh, 30px); }
+.review-fields { flex: none; display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: clamp(10px, 2vh, 24px); }
 .review-fields label { display: block; }
 .review-fields span { display: block; margin: 0 0 6px 4px; color: var(--muted); font: 500 14px var(--text); }
-.review input { height: 56px; padding: 0 16px; }
+.review input { height: clamp(44px, 6vh, 56px); padding: 0 16px; }
 .review-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 31px; margin-top: clamp(10px, 1.8vh, 18px); }
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 10px; min-height: 52px; padding: 8px 16px; border: 1px solid var(--line);
