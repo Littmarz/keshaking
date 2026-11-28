@@ -18,6 +18,7 @@ import { QualityDesk } from './QualityDesk';
 import { Sidebar, type Screen } from './Sidebar';
 import { SignIn } from './SignIn';
 import './styles.css';
+import './theme';
 
 type Example = { title: string; question: string };
 

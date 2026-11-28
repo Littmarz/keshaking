@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { SignOutIcon, XIcon } from '@phosphor-icons/react';
 import type { Account, Session } from './api';
 import { assets, Icon, LogoMark } from './brand';
+import { ThemeToggle } from './theme';
 
 export type Screen = 'chat' | 'requests' | 'quality' | 'knowledge';
 
@@ -91,9 +92,12 @@ export function Sidebar({
       <aside id="sidebar" className={`sidebar ${open ? 'open' : ''}`} aria-label="Навигация">
         <div className="brand-row">
           <Brand />
-          <button type="button" className="drawer-close mobile-only" onClick={onClose} aria-label="Закрыть меню">
-            <XIcon size={22} />
-          </button>
+          <div className="brand-actions">
+            <ThemeToggle />
+            <button type="button" className="drawer-close mobile-only" onClick={onClose} aria-label="Закрыть меню">
+              <XIcon size={22} />
+            </button>
+          </div>
         </div>
         <div className="nav-panel surface">
           <nav className="nav" aria-label="Разделы">

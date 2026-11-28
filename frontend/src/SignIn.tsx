@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { EyeIcon, EyeSlashIcon } from '@phosphor-icons/react';
 import { login, request, type Account, type AuthSession } from './api';
 import { LogoMark } from './brand';
+import { ThemeToggle } from './theme';
 
 export function SignIn({ onSignedIn, notice }: { onSignedIn: (session: AuthSession) => void; notice: string }) {
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -48,6 +49,7 @@ export function SignIn({ onSignedIn, notice }: { onSignedIn: (session: AuthSessi
 
   return (
     <div className="signin-page">
+      <ThemeToggle className="signin-theme" />
       <main className="signin surface" aria-labelledby="sign-in-title">
         <LogoMark />
         <h1 id="sign-in-title">Вход в Пункт</h1>
