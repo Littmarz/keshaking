@@ -51,19 +51,17 @@ export function WorkspaceControls({ isQuality, navigationOpen, hasWaiting, busy,
           <PlusIcon size={24} aria-hidden="true" />
         </button>
       </div>
-      <div className="workspace-actions">
-        <ThemeToggle className="icon-btn" />
-        <div className="workspace-menu" ref={menu}>
-          <button ref={trigger} type="button" className="icon-btn" aria-label="Дополнительное меню"
-            title="Дополнительное меню" aria-expanded={menuOpen} aria-controls="workspace-menu-items"
-            onClick={() => setMenuOpen((open) => !open)}>
-            <ListIcon size={24} aria-hidden="true" />
+      <div className="workspace-menu" ref={menu}>
+        <button ref={trigger} type="button" className="icon-btn" aria-label="Дополнительное меню"
+          title="Дополнительное меню" aria-expanded={menuOpen} aria-controls="workspace-menu-items"
+          onClick={() => setMenuOpen((open) => !open)}>
+          <ListIcon size={24} aria-hidden="true" />
+        </button>
+        <div id="workspace-menu-items" className="workspace-menu-items surface" hidden={!menuOpen}>
+          <button type="button" aria-haspopup="dialog" onClick={openGuide}>
+            <Icon name="book-open-text" />Руководство
           </button>
-          <div id="workspace-menu-items" className="workspace-menu-items surface" hidden={!menuOpen}>
-            <button type="button" aria-haspopup="dialog" onClick={openGuide}>
-              <Icon name="book-open-text" />Руководство
-            </button>
-          </div>
+          <ThemeToggle showLabel />
         </div>
       </div>
       <dialog ref={guide} className="source-dialog" aria-labelledby="guide-title"

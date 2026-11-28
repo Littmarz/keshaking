@@ -52,12 +52,13 @@ export function useTheme(): [Theme, () => void] {
   return [theme, () => setTheme(current === 'dark' ? 'light' : 'dark', true)];
 }
 
-export function ThemeToggle({ className = '' }: { className?: string }) {
+export function ThemeToggle({ className = '', showLabel = false }: { className?: string; showLabel?: boolean }) {
   const [theme, toggle] = useTheme();
   const label = theme === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему';
   return (
     <button type="button" className={`theme-toggle ${className}`} onClick={toggle} aria-label={label} title={label}>
       {theme === 'dark' ? <SunIcon size={20} aria-hidden="true" /> : <MoonIcon size={20} aria-hidden="true" />}
+      {showLabel && <span>{label}</span>}
     </button>
   );
 }

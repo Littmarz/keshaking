@@ -292,7 +292,6 @@ function Workspace({ auth, onExpired, onSignOut, signingOut }: {
                 <div className="empty">
                   <h1>Чем могу помочь?</h1>
                   <div className="ask-card surface">
-                    <h2>Примеры запросов</h2>
                     <div className="examples">
                       {examples.map((example) => (
                         <button className="example" key={example.question} type="button" disabled={busy}
@@ -303,7 +302,7 @@ function Workspace({ auth, onExpired, onSignOut, signingOut }: {
                       ))}
                     </div>
                     <Composer value={question} onChange={setQuestion} onSend={() => void send(question)} busy={busy}
-                      disabled={loadingHistory} placeholder="Например, кто согласует заявку?" autoFocus />
+                      disabled={loadingHistory} placeholder="Напишите свой вопрос…" autoFocus />
                   </div>
                   <p className="hint">Задайте вопрос о рабочем процессе. Если ответ есть в базе, вы увидите точный пункт.</p>
                 </div>
