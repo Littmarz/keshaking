@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import { Fragment, useEffect, useRef, type ReactNode } from 'react';
 import { BookOpenTextIcon, CheckCircleIcon, ClockIcon, ProhibitIcon, QuestionIcon, WarningCircleIcon, XIcon } from '@phosphor-icons/react';
 import type { Answer, Citation } from './api';
 import { assets } from './brand';
@@ -65,12 +65,17 @@ export function AnswerCard({ result, busy, clarificationActive, ask, openSource,
         ))}
       </div>}
       {options.length > 0 && <div className="options">
-        {options.map((option) => (
-          <button type="button" key={option} disabled={busy} onClick={() => ask(option)}
-            className={/^не знаю/i.test(option) ? 'option unknown' : 'option'}>
-            {/^не знаю$/i.test(option.trim()) ? 'Не знаю — показать все варианты' : option}
-          </button>
-        ))}
+        {options.map((option) => {
+          const unknown = /^не знаю/i.test(option.trim());
+          return (
+            <Fragment key={option}>
+              {unknown && <span className="options-break" aria-hidden="true" />}
+              <button type="button" disabled={busy} onClick={() => ask(option)} className={unknown ? 'option unknown' : 'option'}>
+                {/^не знаю$/i.test(option.trim()) ? 'Не знаю — показать все варианты' : option}
+              </button>
+            </Fragment>
+          );
+        })}
       </div>}
       {ticketId && <>
         <div className="progress" aria-label="Ход обращения">

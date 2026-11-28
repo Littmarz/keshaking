@@ -169,7 +169,8 @@ h1, h2, h3, p { margin: 0; }
 .options { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 20px; }
 .option { height: 29px; padding: 0 6px; border: 1px solid var(--accent); border-radius: var(--r-chip); background: transparent; color: var(--accent); font: 500 13px/1 var(--text); }
 .option:hover:not(:disabled) { background: var(--accent-soft); }
-.option.unknown { flex-basis: 100%; max-width: max-content; border: 1px dashed #c9c9c6; color: #5d5e5b; }
+.option.unknown { border: 1px dashed #c9c9c6; color: #5d5e5b; }
+.options-break { flex-basis: 100%; height: 0; }
 
 .progress { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin-top: 20px; font: 500 13px/1 var(--text); }
 .progress span { display: inline-flex; align-items: center; gap: 6px; }
