@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ChecksIcon, EnvelopeSimpleIcon } from '@phosphor-icons/react';
+import { EnvelopeSimpleIcon } from '@phosphor-icons/react';
 import { ApiError, request, type Citation, type Entry, type Ticket } from './api';
 import { Tag } from './Answer';
+import { Icon } from './brand';
 import { ticketDate } from './dates';
 
 type QueueTicket = Ticket & {
@@ -187,7 +188,7 @@ export function QualityDesk({ initialTicket, token, onExpired }: {
             </div>}
             {selected.status === 'published' ? (
               <div className="published-box" role="status">
-                <strong><ChecksIcon size={18} aria-hidden="true" />Опубликовано в базе знаний</strong>
+                <strong><Icon name="checks" size={18} />Опубликовано в базе знаний</strong>
                 {saved?.answer}
               </div>
             ) : <>
@@ -205,7 +206,7 @@ export function QualityDesk({ initialTicket, token, onExpired }: {
           {selected.status !== 'published' && <>
             <div className="review-actions">
               <button type="button" className="btn primary" disabled={busy || !answer.trim()} onClick={() => void publish()}>
-                <ChecksIcon size={34} aria-hidden="true" />Опубликовать в базу
+                <Icon name="checks" size={30} />Опубликовать в базу
               </button>
               <button type="button" className="btn" disabled={busy || !answer.trim() || !hasEdits} onClick={() => void draft()}>
                 Сохранить как черновик

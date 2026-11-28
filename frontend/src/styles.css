@@ -25,7 +25,7 @@
   --bad-ink: #461919;
   --shadow: 0 4px 7.5px rgba(0, 0, 0, .25);
   --shadow-soft: 0 4px 7.5px -1px rgba(0, 0, 0, .25);
-  --shadow-accent: 0 4px 7.5px var(--accent-glow);
+  --shadow-accent: 0 2px 6px rgba(78, 55, 234, .16);  /* без яркого свечения */
   --r-card: 14.5px;
   --r-chip: 8px;
   --r-input: 9.75px;
@@ -70,7 +70,7 @@ h1, h2, h3, p { margin: 0; }
 .nav-btn:hover { background: #fbfbf8; }
 .nav-btn.primary { background: var(--accent); border-color: rgba(78, 55, 234, .32); box-shadow: var(--shadow-accent); color: #f7f8f3; font-weight: 800; }
 .nav-btn.primary:hover { background: #4330de; }
-.nav-btn.current { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.nav-btn.current { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent); box-shadow: 0 1px 3px rgba(78, 55, 234, .12); }
 .nav-btn img.invert, .nav-btn .invert { filter: invert(1); }
 .nav-btn .nav-badge {
   margin-left: auto; min-width: 25px; height: 25px; padding: 0 7px; border-radius: 999px; background: var(--accent);
@@ -297,33 +297,37 @@ button.ticket:hover { border-color: var(--accent-line); }
   .review { position: static; margin: 0 39px 40px 15px; }
   .examples { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+/* Телефон: на экране только «≡» и «+», сайдбар — выдвижная панель слева, как на компьютере. */
+.brand-row { position: relative; flex: none; }
+.drawer-close { position: absolute; right: 10px; top: 50%; translate: 0 -50%; width: 38px; height: 38px; align-items: center; justify-content: center; border: 1px solid var(--line); border-radius: var(--r-chip); background: var(--chip); }
+.mobile-bar { display: none; }
+.icon-btn { position: relative; width: 44px; height: 44px; display: grid; place-items: center; padding: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); box-shadow: var(--shadow-soft); }
+.icon-btn:disabled { opacity: .5; }
+.icon-btn .dot { position: absolute; top: 7px; right: 7px; width: 9px; height: 9px; border-radius: 50%; background: var(--accent); }
+@media (min-width: 861px) { .drawer-backdrop { display: none; } }
 @media (max-width: 860px) {
-  .app { display: block; height: auto; overflow: visible; padding: 8px 10px 0; }
+  .app { display: block; height: auto; overflow: visible; padding: 0 10px; }
   .main { height: auto; overflow: visible; }
-  .sidebar { height: auto; gap: 8px; }
-  .brand-card { height: 50px; }
-  .nav-panel { padding: 10px; }
-  .nav { flex-direction: row; }
-  .nav-btn { flex: 1; height: 46px; gap: 8px; padding: 0 10px; font-size: 12px; }
-  .nav-btn img, .nav-btn .nav-icon { width: 26px; height: 26px; }
-  .history { max-height: 14rem; margin-top: 8px; }
-  .history:not(.open) { display: none; }
-  .history-toggle { display: flex; align-items: center; justify-content: space-between; width: 100%; margin-top: 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--r-chip); background: none; font: 600 13px var(--display); }
-  .history-toggle img { transform: rotate(90deg); transition: transform .15s; }
-  .history-toggle[aria-expanded="true"] img { transform: rotate(-90deg); }
-  .history section + section h3 { margin-top: 14px; }
-  .inside-card { display: none; }
+  .mobile-bar { display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 20; padding: 10px 0 6px; background: var(--bg); }
+  .sidebar {
+    position: fixed; inset: 0 auto 0 0; z-index: 41; width: min(320px, 86vw); height: 100dvh; padding: 10px;
+    background: var(--bg); box-shadow: 0 0 40px rgba(20, 18, 40, .25); overflow-y: auto;
+    transform: translateX(-105%); transition: transform .22s ease; visibility: hidden;
+  }
+  .sidebar.open { transform: none; visibility: visible; }
+  .drawer-backdrop { position: fixed; inset: 0; z-index: 40; background: rgba(20, 18, 40, .35); }
   .mobile-only { display: flex !important; }
-  .chat { height: auto; min-height: calc(100vh - 230px); padding-right: 0; }
-  .thread { padding: 24px 2px 16px; gap: 24px; overflow: visible; }
+  .nav-panel { flex: 1 0 auto; }
+  .history { flex: 1 0 auto; max-height: none; }
+  .chat { height: auto; min-height: calc(100dvh - 60px); padding-right: 0; }
+  .thread { padding: 16px 2px 16px; gap: 22px; overflow: visible; }
   .dock { position: sticky; bottom: 0; padding: 10px 0 12px; background: linear-gradient(transparent, var(--bg) 30%); }
-  .empty { padding: 28px 0 24px; }
+  .empty { padding: 20px 0 24px; justify-content: flex-start; }
   .empty h1 { font-size: 26px; }
   .ask-card { padding: 12px 14px 14px; }
   .examples { grid-template-columns: 1fr; gap: 10px; margin-bottom: 16px; }
   .example { min-height: 0; }
-  .composer .enter-hint { display: none; }
-  .page { padding: 24px 0 32px; }
+  .page { padding: 16px 0 32px; }
   .page h1 { font-size: 28px; }
   .lead { font-size: 16px; }
   .filters { gap: 10px; }
@@ -334,7 +338,9 @@ button.ticket:hover { border-color: var(--accent-line); }
   .reply-box { margin-left: 0; }
   .review { margin: 0 0 32px; }
   .review-actions, .review-fields { grid-template-columns: 1fr; gap: 12px; }
-}.ticket .ticket-q { display: block; }
+}
+
+.ticket .ticket-q { display: block; }
 .kb-source { margin-top: 10px; color: var(--muted); font: 500 13px var(--text); }
 .example img { transform: rotate(-45deg); }
 .user-card .chevron { transform: rotate(-90deg); }
@@ -345,3 +351,17 @@ button.ticket:hover { border-color: var(--accent-line); }
 .dock .composer { max-width: 1100px; margin-inline: auto; }
 .page { max-width: 1140px; }
 .chat > .alert { margin-left: max(15px, calc((100% - 1070px) / 2)); margin-right: max(0px, calc((100% - 1070px) / 2)); }
+
+/* Иконки из src/assets/icons: маска + currentColor — одна иконка бывает чёрной, зелёной и фиолетовой. */
+.icon { display: inline-block; flex: none; background-color: currentColor; -webkit-mask: center / contain no-repeat; mask: center / contain no-repeat; }
+.icon-chat-dots { -webkit-mask-image: url('./assets/icons/chat-dots.svg'); mask-image: url('./assets/icons/chat-dots.svg'); }
+.icon-chats { -webkit-mask-image: url('./assets/icons/chats.svg'); mask-image: url('./assets/icons/chats.svg'); }
+.icon-question { -webkit-mask-image: url('./assets/icons/question.svg'); mask-image: url('./assets/icons/question.svg'); }
+.icon-clock { -webkit-mask-image: url('./assets/icons/clock.svg'); mask-image: url('./assets/icons/clock.svg'); }
+.icon-check-circle { -webkit-mask-image: url('./assets/icons/check-circle.svg'); mask-image: url('./assets/icons/check-circle.svg'); }
+.icon-checks { -webkit-mask-image: url('./assets/icons/checks.svg'); mask-image: url('./assets/icons/checks.svg'); }
+.icon-book-open-text { -webkit-mask-image: url('./assets/icons/book-open-text.svg'); mask-image: url('./assets/icons/book-open-text.svg'); }
+.icon-chat-text { -webkit-mask-image: url('./assets/icons/chat-text.svg'); mask-image: url('./assets/icons/chat-text.svg'); }
+.icon-shield-check { -webkit-mask-image: url('./assets/icons/shield-check.svg'); mask-image: url('./assets/icons/shield-check.svg'); }
+.icon-bookmarks { -webkit-mask-image: url('./assets/icons/bookmarks.svg'); mask-image: url('./assets/icons/bookmarks.svg'); }
+.icon-arrow-elbow-down-left { -webkit-mask-image: url('./assets/icons/arrow-elbow-down-left.svg'); mask-image: url('./assets/icons/arrow-elbow-down-left.svg'); }

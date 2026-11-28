@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { createRoot } from 'react-dom/client';
+import { ListIcon, PlusIcon } from '@phosphor-icons/react';
 import '@fontsource/golos-text/400.css';
 import '@fontsource/golos-text/500.css';
 import '@fontsource/golos-text/600.css';
@@ -102,6 +103,8 @@ function Workspace({ auth, onExpired, onSignOut, signingOut }: {
   const [initialTicket, setInitialTicket] = useState<string | null>(null);
   const [examples, setExamples] = useState<Example[]>(fallbackExamples);
   const [waiting, setWaiting] = useState(0);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const closeMenu = useCallback(() => setMenuOpen(false), []);
   const thread = useRef<HTMLDivElement>(null);
   const publishedTickets = new Set(messages.flatMap((message) => message.role === 'quality' && message.ticket_id ? [message.ticket_id] : []));
   const hasPendingTicket = messages.some(({ result }) => result?.ticket && !publishedTickets.has(result.ticket.ticket_id));
@@ -268,9 +271,14 @@ function Workspace({ auth, onExpired, onSignOut, signingOut }: {
 
   return (
     <div className="app">
-      <Sidebar user={user} screen={screen} chatActive={messages.length > 0} waiting={waiting} sessions={sessions}
+      <Sidebar user={user} screen={screen} waiting={waiting} sessions={sessions} open={menuOpen} onClose={closeMenu}
         activeSession={session} loadingHistory={loadingHistory} busy={busy} signingOut={signingOut}
         onAsk={newChat} onNavigate={navigate} onSelectChat={(id) => void selectChat(id)} onSignOut={onSignOut} />
+      <div className="mobile-bar">
+        <button type="button" className="icon-btn" aria-label="Открыть меню" aria-expanded={menuOpen} aria-controls="sidebar"
+          onClick={() => setMenuOpen(true)}><ListIcon size={24} />{waiting > 0 && <span className="dot" aria-hidden="true" />}</button>
+        <button type="button" className="icon-btn" aria-label="Новый чат" disabled={busy} onClick={newChat}><PlusIcon size={24} /></button>
+      </div>
       <main className="main">
         {screen === 'quality' && isQuality ? <QualityDesk token={token} onExpired={onExpired} initialTicket={initialTicket} />
           : screen === 'knowledge' && isQuality ? <KnowledgeBase token={token} onExpired={onExpired} />

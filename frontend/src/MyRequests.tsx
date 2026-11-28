@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ChatTextIcon } from '@phosphor-icons/react';
 import { ApiError, request, type MyTicket } from './api';
 import { Tag } from './Answer';
+import { Icon } from './brand';
 import { ticketDate } from './dates';
 
 type Filter = 'all' | 'waiting' | 'answered';
@@ -77,7 +77,7 @@ export function MyRequests({ token, onExpired, initialTicket, openChat }: {
               {(ticket.doc_id || ticket.section) && <small>{[ticket.doc_id, ticket.section && `п. ${ticket.section}`].filter(Boolean).join(' · ')}</small>}
             </div>}
             <button type="button" className="link-btn" onClick={() => openChat(ticket.session_id)}>
-              <ChatTextIcon size={24} aria-hidden="true" />Открыть чат
+              <Icon name="chat-text" size={24} />Открыть чат
             </button>
           </article>
         ))}

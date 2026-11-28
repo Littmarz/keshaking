@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { BookOpenIcon, SignOutIcon } from '@phosphor-icons/react';
+import { SignOutIcon, XIcon } from '@phosphor-icons/react';
 import type { Account, Session } from './api';
-import { assets, LogoMark } from './brand';
+import { assets, Icon, LogoMark } from './brand';
 
 export type Screen = 'chat' | 'requests' | 'quality' | 'knowledge';
 
@@ -57,84 +57,94 @@ export function UserCard({ user, signingOut, onSignOut, className = '' }: {
 }
 
 export function Sidebar({
-  user, screen, chatActive, waiting, sessions, activeSession, loadingHistory, busy, signingOut,
+  user, screen, waiting, sessions, activeSession, loadingHistory, busy, signingOut, open, onClose,
   onAsk, onNavigate, onSelectChat, onSignOut,
 }: {
   user: Account;
   screen: Screen;
-  chatActive: boolean;
   waiting: number;
   sessions: Session[];
   activeSession: string;
   loadingHistory: boolean;
   busy: boolean;
   signingOut: boolean;
+  open: boolean;  // на телефоне сайдбар — выдвижная панель
+  onClose: () => void;
   onAsk: () => void;
   onNavigate: (screen: Screen) => void;
   onSelectChat: (id: string) => void;
   onSignOut: () => void;
 }) {
   const isQuality = user.role === 'quality';
-  // Яркая «Задайте вопрос» — только в чате; в службе качества и базе знаний она обычная, чтобы не спорить с текущим разделом.
-  const askIsPrimary = screen === 'chat';
-  const [historyOpen, setHistoryOpen] = useState(false);  // на телефоне история свёрнута, чтобы чат был на первом экране
+  const then = (action: () => void) => () => { action(); onClose(); };
+  useEffect(() => {
+    if (!open) return;
+    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', escape);
+    return () => document.removeEventListener('keydown', escape);
+  }, [open, onClose]);
+  // Текущий раздел — мягкая подсветка, без яркой заливки и свечения.
+  const navClass = (active: boolean) => `nav-btn ${active ? 'current' : ''}`;
   return (
-    <aside className="sidebar" aria-label="Навигация">
-      <Brand />
-      <div className="nav-panel surface">
-        <nav className="nav" aria-label="Разделы">
-          <button type="button" className={`nav-btn ${askIsPrimary ? 'primary' : ''}`} disabled={busy && screen === 'chat'}
-            aria-current={screen === 'chat' && !chatActive ? 'page' : undefined} onClick={onAsk}>
-            <span className="nav-icon"><img src={assets.chatDots} width={26} height={24} alt="" className={askIsPrimary ? '' : 'invert'} /></span>
-            Задайте вопрос
+    <>
+      {open && <div className="drawer-backdrop" onClick={onClose} aria-hidden="true" />}
+      <aside id="sidebar" className={`sidebar ${open ? 'open' : ''}`} aria-label="Навигация">
+        <div className="brand-row">
+          <Brand />
+          <button type="button" className="drawer-close mobile-only" onClick={onClose} aria-label="Закрыть меню">
+            <XIcon size={22} />
           </button>
-          {isQuality ? <>
-            <button type="button" className={`nav-btn ${screen === 'quality' ? 'current' : ''}`}
-              aria-current={screen === 'quality' ? 'page' : undefined} onClick={() => onNavigate('quality')}>
-              <img src={assets.chats} width={32} height={32} alt="" />Очередь
-              {waiting > 0 && <span className="nav-badge" aria-label={`Открытых: ${waiting}`}>{waiting}</span>}
-            </button>
-            <button type="button" className={`nav-btn ${screen === 'knowledge' ? 'current' : ''}`}
-              aria-current={screen === 'knowledge' ? 'page' : undefined} onClick={() => onNavigate('knowledge')}>
-              <span className="nav-icon"><BookOpenIcon size={30} aria-hidden="true" /></span>База знаний
-            </button>
-          </> : (
-            <button type="button" className={`nav-btn ${screen === 'requests' ? 'current' : ''}`}
-              aria-current={screen === 'requests' ? 'page' : undefined} onClick={() => onNavigate('requests')}>
-              <img src={assets.chats} width={32} height={32} alt="" />Служба качества
-              {waiting > 0 && <span className="nav-badge" aria-label={`Ждут ответа: ${waiting}`}>{waiting}</span>}
-            </button>
-          )}
-        </nav>
-        <button type="button" className="history-toggle mobile-only" aria-expanded={historyOpen}
-          onClick={() => setHistoryOpen((value) => !value)}>
-          История чатов{sessions.length ? ` · ${sessions.length}` : ''}<img src={assets.chevron} width={6.27} height={11.05} alt="" />
-        </button>
-        <div className={`history ${historyOpen ? 'open' : ''}`} aria-label="История чатов">
-          {sessions.length === 0 && <p className="history-empty">{loadingHistory ? 'Загружаю историю…' : 'Здесь появятся ваши чаты.'}</p>}
-          {groupByDay(sessions).map(([label, items]) => (
-            <section key={label}>
-              <h3>{label}</h3>
-              <ul>
-                {items.map((item) => (
-                  <li key={item.session_id}>
-                    <button type="button" className="history-item" disabled={busy} title={item.title || undefined}
-                      aria-current={screen === 'chat' && activeSession === item.session_id ? 'true' : undefined}
-                      onClick={() => { setHistoryOpen(false); onSelectChat(item.session_id); }}>
-                      {item.title || 'Новый чат'}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          ))}
         </div>
-        <div className="inside-card">
-          <strong><img src={assets.shieldCheck} width={32} height={32} alt="" />Внутри компании</strong>
-          <p>Ответы доступны только вам. Данные не покидают корпоративный контур.</p>
+        <div className="nav-panel surface">
+          <nav className="nav" aria-label="Разделы">
+            <button type="button" className={navClass(screen === 'chat')} disabled={busy && screen === 'chat'}
+              aria-current={screen === 'chat' ? 'page' : undefined} onClick={then(onAsk)}>
+              <Icon name="chat-dots" size={30} />Задайте вопрос
+            </button>
+            {isQuality ? <>
+              <button type="button" className={navClass(screen === 'quality')}
+                aria-current={screen === 'quality' ? 'page' : undefined} onClick={then(() => onNavigate('quality'))}>
+                <Icon name="chats" size={30} />Очередь
+                {waiting > 0 && <span className="nav-badge" aria-label={`Открытых: ${waiting}`}>{waiting}</span>}
+              </button>
+              <button type="button" className={navClass(screen === 'knowledge')}
+                aria-current={screen === 'knowledge' ? 'page' : undefined} onClick={then(() => onNavigate('knowledge'))}>
+                <Icon name="book-open-text" size={30} />База знаний
+              </button>
+            </> : (
+              <button type="button" className={navClass(screen === 'requests')}
+                aria-current={screen === 'requests' ? 'page' : undefined} onClick={then(() => onNavigate('requests'))}>
+                <Icon name="chats" size={30} />Служба качества
+                {waiting > 0 && <span className="nav-badge" aria-label={`Ждут ответа: ${waiting}`}>{waiting}</span>}
+              </button>
+            )}
+          </nav>
+          <div className="history" aria-label="История чатов">
+            {sessions.length === 0 && <p className="history-empty">{loadingHistory ? 'Загружаю историю…' : 'Здесь появятся ваши чаты.'}</p>}
+            {groupByDay(sessions).map(([label, items]) => (
+              <section key={label}>
+                <h3>{label}</h3>
+                <ul>
+                  {items.map((item) => (
+                    <li key={item.session_id}>
+                      <button type="button" className="history-item" disabled={busy} title={item.title || undefined}
+                        aria-current={screen === 'chat' && activeSession === item.session_id ? 'true' : undefined}
+                        onClick={then(() => onSelectChat(item.session_id))}>
+                        {item.title || 'Новый чат'}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ))}
+          </div>
+          <div className="inside-card">
+            <strong><Icon name="shield-check" size={28} />Внутри компании</strong>
+            <p>Ответы доступны только вам. Данные не покидают корпоративный контур.</p>
+          </div>
         </div>
-      </div>
-      <UserCard user={user} signingOut={signingOut} onSignOut={onSignOut} />
-    </aside>
+        <UserCard user={user} signingOut={signingOut} onSignOut={onSignOut} />
+      </aside>
+    </>
   );
 }

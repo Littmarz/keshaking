@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useRef, type ReactNode } from 'react';
-import { BookOpenTextIcon, CheckCircleIcon, ClockIcon, ProhibitIcon, QuestionIcon, WarningCircleIcon, XIcon } from '@phosphor-icons/react';
+import { ProhibitIcon, WarningCircleIcon, XIcon } from '@phosphor-icons/react';
 import type { Answer, Citation } from './api';
-import { assets } from './brand';
+import { Icon } from './brand';
 
 type Tone = 'ok' | 'wait' | 'info' | 'bad' | 'plain';
 
@@ -9,13 +9,13 @@ export function Tag({ tone, icon, children }: { tone: Tone; icon?: ReactNode; ch
   return <span className={`tag ${tone}`}>{icon}{children}</span>;
 }
 
-const questionIcon = <QuestionIcon size={19} aria-hidden="true" />;
+const questionIcon = <Icon name="question" size={19} />;
 
 function statusTag(result: Answer) {
   const fromQuality = result.citations.length > 0 && result.citations.every((source) => source.source_type === 'qa_entry');
   switch (result.status) {
     case 'answered':
-      return <Tag tone="ok" icon={<img src={assets.checks} width={22} height={22} alt="" />}>
+      return <Tag tone="ok" icon={<Icon name="checks" size={22} />}>
         {fromQuality ? 'Ответ службы качества' : 'Ответ по регламенту'}
       </Tag>;
     case 'partial':
@@ -79,14 +79,14 @@ export function AnswerCard({ result, busy, clarificationActive, ask, openSource,
       </div>}
       {ticketId && <>
         <div className="progress" aria-label="Ход обращения">
-          <span className="done"><CheckCircleIcon size={19} aria-hidden="true" />Письмо отправлено</span>
+          <span className="done"><Icon name="check-circle" size={19} />Письмо отправлено</span>
           <hr aria-hidden="true" />
           <span className={ticketPublished ? 'done' : 'now'}>
-            {ticketPublished ? <CheckCircleIcon size={19} aria-hidden="true" /> : <ClockIcon size={19} aria-hidden="true" />}
+            {ticketPublished ? <Icon name="check-circle" size={19} /> : <Icon name="clock" size={19} />}
             {ticketPublished ? 'Эксперт ответил' : 'Эксперт отвечает'}
           </span>
           <hr aria-hidden="true" />
-          <span className={ticketPublished ? 'done' : 'todo'}><BookOpenTextIcon size={19} aria-hidden="true" />В базе знаний</span>
+          <span className={ticketPublished ? 'done' : 'todo'}><Icon name="book-open-text" size={19} />В базе знаний</span>
         </div>
         <button type="button" className="meta link-meta" onClick={() => openTicket(ticketId)}>
           Обращение <span className="nowrap">{ticketId}</span> · открыть
@@ -99,7 +99,7 @@ export function AnswerCard({ result, busy, clarificationActive, ask, openSource,
 export function QualityReply({ content, ticketId }: { content: string; ticketId?: string }) {
   return (
     <article className="answer surface" aria-label="Ответ службы качества">
-      <Tag tone="info" icon={<img src={assets.chats} width={20} height={20} alt="" />}>Ответ службы качества</Tag>
+      <Tag tone="info" icon={<Icon name="chats" size={20} />}>Ответ службы качества</Tag>
       <p className="answer-text">{content}</p>
       {ticketId && <p className="meta">Обращение {ticketId} · ответ добавлен в базу знаний</p>}
     </article>
