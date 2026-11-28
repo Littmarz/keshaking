@@ -740,9 +740,61 @@ def verify_mixed_conflict(model, question, clarifications, citations, quality_en
     return [], payload
 
 
+PRESSURE = re.compile(
+    r"\b(?:руководител\w*|начальник\w*|директор\w*|босс\w*|срочн\w*|быстр\w*|требу\w*|помоги\w*|помогите|"
+    r"пожалуйста|очень\s+нужно|важн\w*|ответь\w*)\b",
+    re.IGNORECASE,
+)
+NEW_QUESTION = re.compile(
+    r"\?|\b(?:кто|что|чем|чего|когда|сколько|как|какой|какая|какое|какие|каков\w*|где|куда|почему|зачем|можно|"
+    r"нужно\s+ли|надо\s+ли|ли)\b",
+    re.IGNORECASE,
+)
+SCOPE_ONLY_WORDS = re.compile(r"\b(?:пресейл\w*|presale\w*|проект\w*|этап\w*|дирекци\w*|департамент\w*)\b", re.IGNORECASE)
+
+
+def insists_after_refusal(question, history):
+    """После отказа «вне базы» сообщение без нового вопроса — давление («это от руководителя, срочно, помоги»)
+    или голая область («ИБ, пресейл») — не делает исходный вопрос рабочим. Раньше агент принимал такое
+    сообщение за новый вопрос о процедуре, переспрашивал дирекцию и выдавал «ответ по регламенту» не по теме."""
+    from retrieval.mock import detect_directorates, tokenize
+
+    last = next((message for message in reversed(history) if message["role"] == "assistant"), None)
+    if not last or last.get("status") != "refused" or NEW_QUESTION.search(question):
+        return False
+    _, rest = detect_directorates(question)
+    return bool(PRESSURE.search(question)) or not tokenize(SCOPE_ONLY_WORDS.sub(" ", rest))
+
+
+def refusal_follow_up(started_at, start):
+    answer = ("Это по-прежнему вопрос вне корпоративных регламентов: срочность или просьба руководителя этого не меняют. "
+              "Задайте вопрос о рабочем процессе — например, кто согласует ТКП в дирекции ИБ.")
+    elapsed = round((perf_counter() - start) * 1000)
+    return {
+        "status": "refused",
+        "answer": answer,
+        "citations": [],
+        "reason": answer,
+        "clarification": None,
+        "ticket": None,
+        "steps": [{
+            "name": "guard",
+            "title": "Вопрос по-прежнему вне базы регламентов",
+            "detail": {"prompt_tokens": None, "completion_tokens": None},
+            "started_at": started_at,
+            "duration_ms": elapsed,
+        }],
+        "metrics": {"n_hits": 0, "top_score": None, "n_retrieval_rounds": 0, "llm_calls": 0},
+        "model": None,
+        "latency_ms": elapsed,
+    }
+
+
 def run_agent(question, history, confirmed_entries=()):
     started_at = datetime.now(UTC).isoformat()
     start = perf_counter()
+    if insists_after_refusal(question, history):
+        return refusal_follow_up(started_at, start)
     original, clarifications = conversation_question(question, history)
     replies = [item["reply"] for item in clarifications]
     known_replies = [reply for reply in replies if not UNKNOWN_CLARIFICATION.fullmatch(reply.strip().rstrip(".!?…"))]
