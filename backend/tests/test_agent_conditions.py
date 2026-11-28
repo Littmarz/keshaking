@@ -352,6 +352,42 @@ class DialogTests(unittest.TestCase):
                         with self.assertRaises(AgentError):
                             run_agent("Какой срок?", [])
 
+    def test_reply_deadline_keeps_strict_boundary_in_a_single_source_answer(self):
+        question = "Через сколько дней карточка проекта ИБ уходит в «Отклонён», если SS не отвечает?"
+        rule = "Если SS не отвечает более 5 рабочих дней, карточка переводится в статус «Отклонён»."
+        chunk = Chunk("ib-project::2.3", "ib-project", "Регламент", "2.3", "2.3. " + rule,
+                      directorate="ИБ", stage="проект")
+        search = SearchResult(hits=[Hit(chunk, 1.0)], scope=["ИБ"])
+        decision = {"scope": "company_process", "status": "answered",
+                    "text": "Карточку отклонят через 5 рабочих дней.", "source_ids": [1]}
+        response = {"message": {"content": json.dumps(decision)}}
+        with patch.dict(os.environ, {"AGENT_SOURCES": "documents"}), patch(
+            "app.agent.search_documents", return_value=(search, [chunk])
+        ), patch("app.agent.urlopen", return_value=io.BytesIO(json.dumps(response).encode())):
+            result = run_agent(question, [])
+        self.assertEqual(result["status"], "answered")
+        self.assertEqual(result["answer"], rule + " [1]")
+        self.assertEqual([source["chunk_id"] for source in result["citations"]], [chunk.chunk_id])
+
+    def test_missing_rtz_information_uses_the_rule_with_the_named_roles(self):
+        question = "TPS говорит, что в заявке не хватает данных для РТЗ — что будет со сроками?"
+        rule = ("Если для расчёта трудозатрат (РТЗ) нет информации, TPS возвращает заявку SS на доработку, "
+                "сроки сдвигаются до предоставления данных.")
+        rule_chunk = Chunk("tech::2.6", "tech", "Техдирекция", "2.6", "2.6. " + rule,
+                           directorate="Техдирекция")
+        other_chunk = Chunk("other::3.3", "other", "Другой регламент", "3.3",
+                            "Архитектор возвращает заявку TPS на доработку.", directorate="ДБРЦТ")
+        chunks = [rule_chunk, other_chunk]
+        search = SearchResult(hits=[Hit(chunk, 1.0) for chunk in chunks])
+        with patch.dict(os.environ, {"AGENT_SOURCES": "documents"}), patch(
+            "app.agent.search_documents", return_value=(search, chunks)
+        ), patch("app.agent.ask_model") as ollama:
+            result = run_agent(question, [])
+        ollama.assert_not_called()
+        self.assertEqual(result["status"], "answered")
+        self.assertEqual(result["answer"], rule + " [1]")
+        self.assertEqual([source["chunk_id"] for source in result["citations"]], [rule_chunk.chunk_id])
+
     def test_model_conflict_preserves_source_deadlines_and_labels(self):
         question = "Через сколько дней карточка проекта ИБ уходит в «Отклонён», если SS не отвечает?"
         rule = "Если SS не отвечает {}, карточка переводится в статус «Отклонён»."

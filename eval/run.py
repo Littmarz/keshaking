@@ -23,6 +23,7 @@ import datetime as dt
 import importlib
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -130,6 +131,10 @@ def _judge(c: dict, statuses: list[str], last: dict, ms: float) -> dict:
     missing.extend(
         " / ".join(variants) for variants in c.get("must_contain_any", [])
         if not any(variant.casefold() in normalized for variant in variants)
+    )
+    missing.extend(
+        check["label"] for check in c.get("must_match", [])
+        if not re.search(check["pattern"], answer, re.IGNORECASE)
     )
     src_ok = all(any(_match(e, *g) for g in cited) for e in c.get("expected_sources", []))
     if last.get("status") == "conflict":

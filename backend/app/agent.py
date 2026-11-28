@@ -171,6 +171,15 @@ MISSING_INPUT = re.compile(r"\b(?:нет|отсутствует)\s+([^,.;!?\n]+)
 MISSING_INPUT_RULE = re.compile(
     r"^\s*\d+(?:\.\d+)*\.\s+(?P<rule>при отсутствии\s+(?P<tail>.+))$", re.IGNORECASE
 )
+MISSING_INFORMATION = re.compile(
+    r"\b(?:нет|недостаточно|не хватает)\s+(?:достаточн\w+\s+)?(?:данн\w*|информаци\w*|документ\w*)\b",
+    re.IGNORECASE,
+)
+RETURN_AND_SHIFT_RULE = re.compile(
+    r"^если\s+(?P<condition>[^,.;!?\n]+),\s+(?P<actor>[A-ZА-ЯЁ]{2,})\s+возвращает\s+"
+    r"[^.;!?\n]+\s+на доработку,\s+сроки\s+[^.;!?\n]*\bсдвигаются\s+до\s+[^.;!?\n]+\.?$",
+    re.IGNORECASE,
+)
 OUTCOME_QUESTION = re.compile(r"^\s*что\s+(?:будет|произойд[её]т)\b", re.IGNORECASE)
 WAITING_QUESTION = re.compile(r"\bчерез\s+сколько\b", re.IGNORECASE)
 BUSINESS_POLICY = re.compile(r"\b(?:лиценз\w*|дресс[- ]?код\w*|требовани\w* к одежде|командировк\w*)\b", re.IGNORECASE)
@@ -572,10 +581,21 @@ def direct_prohibition(question, sources):
 def direct_rule(question, result, replies):
     from retrieval.mock import detect_directorates, tokenize
 
-    if len(result.scope) != 1 or not result.hits:
+    if not result.hits:
         return None
     passage = result.hits[0].chunk.text.strip()
     if len(passage) > 250:
+        return None
+    if (not replies and not result.ambiguous_scope and DEADLINE_QUESTION.search(question)
+            and MISSING_INFORMATION.search(question)):
+        rule = RETURN_AND_SHIFT_RULE.fullmatch(CLAUSE_NUMBER.sub("", passage))
+        if rule and rule["actor"].isupper() and MISSING_INFORMATION.search(rule["condition"]):
+            # A named role and an explicit procedure abbreviation must match the same clause.
+            question_terms = set(tokenize(question))
+            procedure_terms = set(tokenize(" ".join(re.findall(r"\b[A-ZА-ЯЁ]{2,}\b", rule["condition"]))))
+            if set(tokenize(rule["actor"])) <= question_terms and question_terms & procedure_terms:
+                return rule[0]
+    if len(result.scope) != 1:
         return None
     if replies and OUTCOME_QUESTION.match(question):
         missing = MISSING_INPUT.search(replies[-1])
@@ -776,6 +796,11 @@ def run_agent(question, history, confirmed_entries=()):
                 f"а во втором {second}. "
                 "Уточните в службе качества, какой срок применять."
             )
+        elif (not model_conflict and len(citations) == 1 and DURATION_QUESTION.search(original)
+              and not DURATION.search(query)):
+            deadline = reply_deadline(citations[0], include_inclusive=True)
+            if deadline and re.search(rf"\b{re.escape(deadline[0][2])}\b", original, re.IGNORECASE):
+                answer = CLAUSE_NUMBER.sub("", citations[0]["quote"].strip())
     if status == "answered" and result is not None and not relies_on_quality:
         recovery = following_recovery_step(original, sources, citations)
         if recovery:

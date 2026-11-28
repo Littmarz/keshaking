@@ -111,6 +111,23 @@ class TestAnswerEvaluation(unittest.TestCase):
                 last = {"status": "answered", "answer": answer}
                 self.assertEqual(run._judge(case, case["expected_status"], last, 0)["facts_ok"], correct)
 
+    def test_missing_information_requires_correct_handoff_and_applicable_sources(self):
+        case = run.load(run.DATASET, {"c17"})[0]
+        source = {"doc_id": "tech-project", "section": "2.6"}
+        wrong_source = {"doc_id": "dbrct-project", "section": "2.1.1"}
+        correct = "TPS возвращает заявку SS на доработку. Сроки сдвигаются до получения данных."
+        wrong_roles = "Архитектор возвращает заявку TPS на доработку. Сроки сдвигаются до получения данных."
+        for answer, citations, facts_ok, leaks in (
+            (correct, [source], True, []),
+            (wrong_roles, [source], False, []),
+            (correct, [source, wrong_source], True, ["dbrct-project::2.1.1"]),
+        ):
+            with self.subTest(answer=answer, citations=citations):
+                last = {"status": "answered", "answer": answer, "citations": citations}
+                judged = run._judge(case, ["answered"], last, 0)
+                self.assertEqual(judged["facts_ok"], facts_ok)
+                self.assertEqual(judged["leak"], leaks)
+
     def test_conflict_requires_distinct_sources_with_expected_section(self):
         case = run.load(run.DATASET, {"c09"})[0]
         first = {"doc_id": "ib-project", "section": "2.3"}
