@@ -410,15 +410,29 @@ _INDEX: _Index | None = None
 
 
 def search_confirmed_questions(query: str, entries: list[dict], k: int = 3) -> list[dict]:
-    """Ищет вопросы опубликованных разъяснений из базы приложения."""
+    """Ищет вопросы опубликованных разъяснений из базы приложения.
+
+    Разъяснение подходит, только если его вопрос покрывает не меньше QA_MIN_COVERAGE веса слов запроса
+    (вес — idf по регламентам). Без порога хватало одного общего слова: вопрос про TPS и РТЗ (c17)
+    цеплялся за разъяснение о юристах и ТКП через расшифровку сокращений, агент пропускал прямое правило
+    и цитировал пункт чужой дирекции. Пересказы того же вопроса (c08) покрывают 0.7–1.0, случайные — 0.03."""
     scope, stripped = detect_directorates(query)
-    tokens = list(dict.fromkeys(tokenize(expand(stripped, skip=_DIRECTORATE_CANON))))
+    expanded = expand(stripped, skip=_DIRECTORATE_CANON)
+    tokens = list(dict.fromkeys(tokenize(expanded)))
+    corpus = _index()
+    weighted = corpus.query_tokens(expanded)
+    total = sum(corpus.idf.get(token, 0.0) for token in weighted)
     candidates = []
     for entry in entries:
         if entry.get("status") != "confirmed":
             continue
         entry_scope, _ = detect_directorates(entry.get("directorate") or entry["question"])
         if scope and entry_scope and not set(scope).intersection(entry_scope):
+            continue
+        _, entry_text = detect_directorates(entry["question"])
+        entry_tokens = set(corpus.query_tokens(expand(entry_text, skip=_DIRECTORATE_CANON)))
+        covered = sum(corpus.idf.get(token, 0.0) for token in weighted if token in entry_tokens)
+        if not total or covered / total < QA_MIN_COVERAGE:
             continue
         candidates.append(entry)
     chunks = [

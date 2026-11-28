@@ -175,6 +175,13 @@ class TestConfirmedQuestions(unittest.TestCase):
         )
         self.assertEqual(matches, [entry])
 
+    @unittest.skipUnless(HAVE_DATA, "нет DOCX в data/raw/")
+    def test_one_shared_word_is_not_the_same_question(self):
+        entry = {"qa_entry_id": "qa", "question": "Сколько дней даётся на согласование ТКП с юристами?", "status": "confirmed"}
+        self.assertEqual(mock.search_confirmed_questions("За сколько дней юристы согласуют ТКП?", [entry]), [entry])
+        self.assertEqual(mock.search_confirmed_questions(
+            "TPS говорит, что в заявке не хватает данных для РТЗ — что будет со сроками?", [entry]), [])
+
 
 if __name__ == "__main__":
     unittest.main()
