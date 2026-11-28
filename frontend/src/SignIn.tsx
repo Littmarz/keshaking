@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
+import { EyeIcon, EyeSlashIcon } from '@phosphor-icons/react';
 import { login, request, type Account, type AuthSession } from './api';
 import { LogoMark } from './brand';
 
@@ -6,6 +7,7 @@ export function SignIn({ onSignedIn, notice }: { onSignedIn: (session: AuthSessi
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [selectedId, setSelectedId] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -58,7 +60,7 @@ export function SignIn({ onSignedIn, notice }: { onSignedIn: (session: AuthSessi
               {accounts.map((account) => (
                 <label key={account.user_id}>
                   <input name="account" type="radio" value={account.user_id} checked={selectedId === account.user_id}
-                    onChange={() => { setSelectedId(account.user_id); setPassword(''); setError(''); }} />
+                    onChange={() => { setSelectedId(account.user_id); setPassword(''); setShowPassword(false); setError(''); }} />
                   {account.name}
                 </label>
               ))}
@@ -66,8 +68,15 @@ export function SignIn({ onSignedIn, notice }: { onSignedIn: (session: AuthSessi
             {selected?.password_required && (
               <>
                 <label className="sr-only" htmlFor="sign-in-password">Пароль</label>
-                <input id="sign-in-password" className="field" type="password" autoComplete="current-password" placeholder="Пароль"
-                  value={password} required disabled={submitting} onChange={(event) => setPassword(event.target.value)} />
+                <div className="password-field">
+                  <input id="sign-in-password" className="field" type={showPassword ? 'text' : 'password'} autoComplete="current-password"
+                    placeholder="Пароль" value={password} required disabled={submitting} onChange={(event) => setPassword(event.target.value)} />
+                  <button type="button" className="password-toggle" disabled={submitting} aria-controls="sign-in-password"
+                    aria-pressed={showPassword} aria-label={showPassword ? 'Скрыть пароль' : 'Показать пароль'}
+                    title={showPassword ? 'Скрыть пароль' : 'Показать пароль'} onClick={() => setShowPassword((shown) => !shown)}>
+                    {showPassword ? <EyeSlashIcon size={22} aria-hidden="true" /> : <EyeIcon size={22} aria-hidden="true" />}
+                  </button>
+                </div>
               </>
             )}
             {error && <p className="alert" role="alert">{error}</p>}
