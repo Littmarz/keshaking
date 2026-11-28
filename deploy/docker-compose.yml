@@ -13,6 +13,7 @@ services:
       RETRIEVAL_MODE: ${RETRIEVAL_MODE:-bm25}
       LLM_BASE_URL: ${LLM_BASE_URL:-http://host.docker.internal:11434}
       LLM_MODEL: ${LLM_MODEL:-qwen3:8b}
+      AGENT_TIMEOUT_S: ${AGENT_TIMEOUT_S:-120}
       KESHAKING_DB_PATH: /var/lib/punkt/mock.sqlite3
       PUNKT_WEB_DIR: /opt/punkt/web
       PUNKT_TEST_MAIL: ${PUNKT_TEST_MAIL:-0}
