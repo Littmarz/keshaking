@@ -274,24 +274,25 @@ h1, h2, h3, p { margin: 0; }
 .chat > .alert { margin: 16px 0 0 15px; }
 
 /* ---------- страницы: мои обращения, очередь, база знаний ---------- */
-.page { padding: clamp(24px, 7.5vh, 79px) clamp(0px, 2.7vw, 39px) 40px 15px; }
-.page h1 { font: 700 40px/1.15 var(--display); letter-spacing: -.01em; }
-.lead { margin-top: 10px; font: 500 18px/1.3 var(--text); }
-.filters { display: flex; flex-wrap: wrap; gap: 12px 37px; margin-top: 18px; }
-.quality-layout .filters { column-gap: 24px; }
-.pill { height: 34px; padding: 0 17px; border: 0; border-radius: 999px; background: var(--chip); box-shadow: var(--shadow); color: var(--pill-ink); font: 600 20px/34px var(--display); white-space: nowrap; }
+.page { padding: clamp(20px, 5.5vh, 56px) clamp(0px, 2.7vw, 39px) 40px 15px; }
+.page h1 { font: 700 clamp(26px, 3.8vh, 32px)/1.2 var(--display); letter-spacing: -.01em; }
+.lead { margin-top: 8px; color: var(--ink-soft); font: 500 16px/1.35 var(--text); }
+.filters { display: flex; flex-wrap: wrap; gap: 10px 14px; margin-top: 16px; }
+.quality-layout .filters { column-gap: 12px; }
+.pill { height: 34px; padding: 0 17px; border: 0; border-radius: 999px; background: var(--chip); box-shadow: var(--shadow); color: var(--pill-ink); font: 600 14px/34px var(--display); white-space: nowrap; }
 .pill[aria-pressed="true"] { background: var(--pill-on-bg); color: var(--pill-on-ink); }
-.cards { display: flex; flex-direction: column; gap: 30px; margin-top: 30px; }
-.ticket { display: block; width: 100%; padding: 18px 26px 20px 30px; text-align: left; }
+.cards { display: flex; flex-direction: column; gap: 16px; margin-top: 22px; }
+.ticket { display: block; width: 100%; padding: 15px 22px 16px 22px; text-align: left; }
 button.ticket:hover { border-color: var(--accent-line); }
 .ticket[aria-current="true"] { border-color: var(--accent-ink); }
-.ticket-head { display: flex; align-items: center; gap: 21px; }
-.ticket-id { font: 500 20px/1 var(--text); }
+.ticket-head { display: flex; align-items: center; gap: 14px; }
+.ticket-id { font: 600 16px/1 var(--text); }
+.ticket .tag { height: 26px; font-size: 14px; }
 .ticket-date { margin-left: auto; color: var(--muted); font: 400 13px var(--text); white-space: nowrap; }
-.ticket-q { margin-top: 9px; font: 500 16px/1.25 var(--text); overflow-wrap: anywhere; }
-.reply-box { margin: 16px 0 0 16px; max-width: 618px; padding: 14px 22px; border-radius: var(--r-card); background: var(--accent-soft); font: 500 16px/1.2 var(--text); white-space: pre-wrap; }
+.ticket-q { margin-top: 8px; font: 500 15px/1.35 var(--text); overflow-wrap: anywhere; }
+.reply-box { margin: 16px 0 0 16px; max-width: 618px; padding: 14px 22px; border-radius: var(--r-card); background: var(--accent-soft); font: 500 15px/1.35 var(--text); white-space: pre-wrap; }
 .reply-box small { display: block; margin-top: 6px; color: var(--reply-small); font-size: 13px; }
-.empty-note { margin-top: 30px; color: var(--muted); font-size: 16px; }
+.empty-note { margin-top: 22px; color: var(--muted); font-size: 15px; }
 
 /* Очередь службы качества: как чат — по центру широкого экрана. Форма ответа занимает высоту окна:
    на большом мониторе поле ответа растягивается до низа, на маленьком сжимается, и кнопки видны без прокрутки. */
@@ -302,13 +303,13 @@ button.ticket:hover { border-color: var(--accent-line); }
 .review-panel { flex: 0 1 auto; min-height: 0; overflow-y: auto; scrollbar-width: thin; display: flex; flex-direction: column; padding: clamp(16px, 2.4vh, 22px) 24px clamp(18px, 2.6vh, 25px); background: var(--panel); }
 .review:has(textarea) .review-panel { flex: 1 1 auto; }
 .review-actions, .review-note { flex: none; }
-.review-meta { color: var(--faint); font: 500 15px/1.3 var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.review h2 { margin-top: clamp(10px, 2vh, 22px); font: 700 clamp(18px, 2.9vh, 24px)/1.25 var(--display); overflow-wrap: anywhere; }
-.review-reason { margin-top: clamp(8px, 1.4vh, 14px); font: 500 clamp(15px, 2.3vh, 18px)/1.3 var(--text); }
-.review-reason ul { margin: 8px 0 0; padding-left: 20px; font-size: 16px; }
+.review-meta { color: var(--faint); font: 500 13px/1.3 var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.review h2 { margin-top: clamp(10px, 2vh, 22px); font: 700 clamp(17px, 2.5vh, 20px)/1.3 var(--display); overflow-wrap: anywhere; }
+.review-reason { margin-top: clamp(6px, 1.2vh, 12px); color: var(--ink-soft); font: 500 15px/1.35 var(--text); }
+.review-reason ul { margin: 8px 0 0; padding-left: 20px; font-size: 14px; }
 .review textarea, .review input {
   width: 100%; border: 1px solid var(--line); border-radius: var(--r-card); background: var(--bg); outline: 0;
-  font: 500 16px/1.2 var(--text);
+  font: 500 15px/1.35 var(--text);
 }
 .review textarea { display: block; flex: 1 1 auto; min-height: 84px; margin-top: clamp(14px, 2.5vh, 26px); padding: 20px 26px; resize: none; }
 .review textarea:focus, .review input:focus { border-color: var(--accent-line); box-shadow: 0 0 0 3px rgba(78, 55, 234, .12); }
@@ -428,10 +429,10 @@ button.ticket:hover { border-color: var(--accent-line); }
   .examples { grid-template-columns: 1fr; gap: 10px; margin-bottom: 16px; }
   .example { min-height: 0; padding: 14px 32px 14px 16px; }
   .page { padding: 16px 0 32px; }
-  .page h1 { font-size: 28px; }
-  .lead { font-size: 16px; }
+  .page h1 { font-size: 26px; }
+  .lead { font-size: 15px; }
   .filters { gap: 10px; }
-  .pill { font-size: 15px; height: 32px; line-height: 32px; }
+  .pill { font-size: 13px; height: 32px; line-height: 32px; }
   .cards { gap: 16px; margin-top: 20px; }
   .ticket { padding: 14px 16px; }
   .ticket-head { flex-wrap: wrap; gap: 10px; }
