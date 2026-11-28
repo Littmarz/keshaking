@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ListIcon, PlusIcon } from '@phosphor-icons/react';
 import '@fontsource/golos-text/400.css';
 import '@fontsource/golos-text/500.css';
 import '@fontsource/golos-text/600.css';
@@ -17,8 +16,8 @@ import { MyRequests } from './MyRequests';
 import { QualityDesk } from './QualityDesk';
 import { Sidebar, type Screen } from './Sidebar';
 import { SignIn } from './SignIn';
+import { WorkspaceControls } from './WorkspaceControls';
 import './styles.css';
-import './theme';
 
 type Example = { title: string; question: string };
 
@@ -275,11 +274,8 @@ function Workspace({ auth, onExpired, onSignOut, signingOut }: {
       <Sidebar user={user} screen={screen} waiting={waiting} sessions={sessions} open={menuOpen} onClose={closeMenu}
         activeSession={session} loadingHistory={loadingHistory} busy={busy} signingOut={signingOut}
         onAsk={newChat} onNavigate={navigate} onSelectChat={(id) => void selectChat(id)} onSignOut={onSignOut} />
-      <div className="mobile-bar">
-        <button type="button" className="icon-btn" aria-label="Открыть меню" aria-expanded={menuOpen} aria-controls="sidebar"
-          onClick={() => setMenuOpen(true)}><ListIcon size={24} />{waiting > 0 && <span className="dot" aria-hidden="true" />}</button>
-        <button type="button" className="icon-btn" aria-label="Новый чат" disabled={busy} onClick={newChat}><PlusIcon size={24} /></button>
-      </div>
+      <WorkspaceControls isQuality={isQuality} navigationOpen={menuOpen} hasWaiting={waiting > 0} busy={busy}
+        onOpenNavigation={() => setMenuOpen(true)} onNewChat={newChat} />
       <main className="main">
         {screen === 'quality' && isQuality ? <QualityDesk token={token} onExpired={onExpired} initialTicket={initialTicket} />
           : screen === 'knowledge' && isQuality ? <KnowledgeBase token={token} onExpired={onExpired} />

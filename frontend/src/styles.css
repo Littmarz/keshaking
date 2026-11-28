@@ -58,7 +58,7 @@
   color-scheme: light;
 }
 
-/* Тёмная тема: те же токены, переключатель — в сайдбаре и на странице входа (theme.tsx). */
+/* Тёмная тема: те же токены, переключатель — в верхней панели и на странице входа. */
 :root[data-theme="dark"] {
   --bg: #16171a;
   --panel: #1d1e22;
@@ -131,9 +131,19 @@ h1, h2, h3, p { margin: 0; }
 
 /* ---------- каркас ---------- */
 /* Приложение ровно в высоту окна: прокручиваются лента чата, списки и история, но не страница целиком. */
-.app { display: grid; grid-template-columns: clamp(220px, 18vw, 251px) minmax(0, 1fr); column-gap: clamp(16px, 2.6vw, 40px); padding: 9px 14px; height: 100vh; height: 100dvh; overflow: hidden; }
-.sidebar { height: 100%; min-height: 0; display: flex; flex-direction: column; gap: 9px; }
-.main { min-width: 0; min-height: 0; height: 100%; display: flex; flex-direction: column; overflow-y: auto; }
+.app { display: grid; grid-template-columns: clamp(220px, 18vw, 251px) minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); column-gap: clamp(16px, 2.6vw, 40px); padding: 9px 14px; height: 100vh; height: 100dvh; overflow: hidden; }
+.sidebar { grid-area: 1 / 1 / -1; height: 100%; min-height: 0; display: flex; flex-direction: column; gap: 9px; }
+.main { grid-area: 2 / 2; min-width: 0; min-height: 0; height: 100%; display: flex; flex-direction: column; overflow-y: auto; }
+
+.workspace-bar { grid-area: 1 / 2; position: relative; z-index: 20; display: flex; justify-content: flex-end; align-items: center; gap: 12px; }
+.workspace-actions { display: flex; align-items: center; gap: 8px; }
+.workspace-menu { position: relative; }
+.workspace-menu-items { position: absolute; top: calc(100% + 8px); right: 0; min-width: 172px; padding: 5px; }
+.workspace-menu-items button { display: flex; align-items: center; gap: 9px; width: 100%; padding: 10px; border: 0; border-radius: var(--r-chip); background: transparent; text-align: left; }
+.workspace-menu-items button:hover, .workspace-bar .icon-btn:hover { background: var(--hover-soft); }
+.guide-steps { margin: 18px 0 0; padding-inline-start: 22px; font: 400 15px/1.5 var(--text); }
+.guide-steps li + li { margin-top: 12px; }
+.guide-steps li::marker { color: var(--accent-ink); font-weight: 600; }
 
 .brand-card { height: 57px; flex: none; display: flex; align-items: center; gap: 13px; padding: 0 20px; }
 .brand-name { font: 500 24px/1 var(--display); letter-spacing: -.01em; }
@@ -392,14 +402,13 @@ button.ticket:hover { border-color: var(--accent-line); }
   .review textarea { min-height: clamp(140px, 30vh, 300px); resize: vertical; }
   .examples { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
-/* Телефон: на экране только «≡» и «+», сайдбар — выдвижная панель слева, как на компьютере. */
+/* На телефоне навигация открывается в выдвижной панели. */
 .brand-row { position: relative; flex: none; }
 .brand-actions { position: absolute; right: 10px; top: 50%; translate: 0 -50%; display: flex; gap: 6px; }
 .drawer-close, .theme-toggle { width: 38px; height: 38px; display: grid; place-items: center; padding: 0; border: 1px solid var(--line); border-radius: var(--r-chip); background: var(--chip); color: var(--ink-soft); }
 .drawer-close.mobile-only { display: none !important; }
 .theme-toggle:hover { color: var(--accent-ink); border-color: var(--accent-line); }
 .signin-theme { position: fixed; top: 14px; right: 14px; }
-.mobile-bar { display: none; }
 .icon-btn { position: relative; width: 44px; height: 44px; display: grid; place-items: center; padding: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); box-shadow: var(--shadow-soft); }
 .icon-btn:disabled { opacity: .5; }
 .icon-btn .dot { position: absolute; top: 7px; right: 7px; width: 9px; height: 9px; border-radius: 50%; background: var(--accent); }
@@ -407,7 +416,7 @@ button.ticket:hover { border-color: var(--accent-line); }
 @media (max-width: 860px) {
   .app { display: block; height: auto; overflow: visible; padding: 0 10px; }
   .main { height: auto; overflow: visible; }
-  .mobile-bar { display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 20; padding: 10px 0 6px; background: var(--bg); }
+  .workspace-bar { justify-content: space-between; position: sticky; top: 0; padding: 10px 0 6px; background: var(--bg); }
   .sidebar {
     position: fixed; inset: 0 auto 0 0; z-index: 41; width: min(320px, 86vw); height: 100dvh; padding: 10px;
     background: var(--bg); box-shadow: 0 0 40px rgba(20, 18, 40, .25); overflow-y: auto;
@@ -424,6 +433,7 @@ button.ticket:hover { border-color: var(--accent-line); }
   .dock { position: sticky; bottom: 0; padding: 10px 0 12px; background: linear-gradient(transparent, var(--bg) 30%); }
   .empty { padding: 20px 0 24px; justify-content: flex-start; }
   .empty h1 { font-size: 26px; }
+  .guide-inner { padding: 20px; }
   .ask-card { padding: 12px 14px 14px; }
   .examples { grid-template-columns: 1fr; gap: 10px; margin-bottom: 16px; }
   .example { min-height: 0; padding: 14px 32px 14px 16px; }
